@@ -1,4 +1,4 @@
-module llhttp.types;
+module wire.types;
 
 import core.stdc.string : memcmp;
 

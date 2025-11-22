@@ -1,7 +1,7 @@
-module llhttp.parser;
+module wire.parser;
 
-import llhttp.bindings;
-import llhttp.types;
+import wire.bindings;
+import wire.types;
 import core.stdc.stdlib : calloc, free;
 
 /**

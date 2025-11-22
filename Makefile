@@ -1,5 +1,5 @@
 # ============================================================================
-# D llhttp Wrapper - Professional Makefile
+# Wire - High-Performance HTTP Parser for D
 # ============================================================================
 
 # Compiler Configuration
@@ -10,11 +10,11 @@ AR       := ar
 # Directories
 BUILD_DIR    := build
 SRC_DIR      := source
-LLHTTP_SRC   := $(SRC_DIR)/llhttp/c
-D_SOURCES    := $(SRC_DIR)/llhttp
+LLHTTP_SRC   := $(SRC_DIR)/wire/c
+D_SOURCES    := $(SRC_DIR)/wire
 
 # Output
-LIB_NAME     := libllhttp-d.a
+LIB_NAME     := libwire.a
 TEST_BIN     := $(BUILD_DIR)/tests
 LIB_OUT      := $(BUILD_DIR)/$(LIB_NAME)
 
@@ -46,8 +46,8 @@ all: test
 
 # Help
 help:
-	@echo "D llhttp Wrapper - Build Targets"
-	@echo "================================="
+	@echo "Wire - High-Performance HTTP Parser - Build Targets"
+	@echo "===================================================="
 	@echo "  make all      - Build and run tests (default)"
 	@echo "  make test     - Compile and run test suite"
 	@echo "  make lib      - Build static library"

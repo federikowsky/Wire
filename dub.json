@@ -1,22 +1,37 @@
 {
-    "name": "llhttp-d",
-    "description": "Ultra-performance llhttp wrapper for D",
+    "name": "wire",
+    "description": "High-performance, zero-allocation HTTP parser for D - wrapping llhttp",
     "authors": [
-        "Antigravity"
+        "Federico Filippi"
     ],
     "license": "MIT",
     "targetType": "library",
-    "dflags": [
-        "-O3",
-        "-mcpu=native",
-        "-boundscheck=off"
-    ],
+    "dependencies": {},
     "sourcePaths": [
-        "source",
-        "source/llhttp/c"
+        "source/wire",
+        "source/wire/c"
     ],
-    "importPaths": [
-        "source"
+    "dflags": [
+        "-betterC=false"
     ],
-    "dependencies": {}
+    "lflags": [],
+    "buildTypes": {
+        "release": {
+            "buildOptions": [
+                "releaseMode",
+                "optimize",
+                "inline"
+            ],
+            "dflags": [
+                "-O3",
+                "-mcpu=native"
+            ]
+        },
+        "debug": {
+            "buildOptions": [
+                "debugMode",
+                "debugInfo"
+            ]
+        }
+    }
 }

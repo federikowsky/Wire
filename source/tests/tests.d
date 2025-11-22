@@ -1,13 +1,11 @@
-module tests;
-
 import std.stdio;
 import std.exception;
 import core.exception;
 import std.string : format;
 import std.array : appender;
-import llhttp;
-import llhttp.parser;
-import llhttp.types;
+import wire;
+import wire.parser;
+import wire.types;
 
 // ============================================================================
 // Test Framework
@@ -356,7 +354,7 @@ void testChunkedEncoding() {
 
 void main() {
     writeln("\n\x1b[1;36m╔══════════════════════════════════════════════════════════╗\x1b[0m");
-    writeln("\x1b[1;36m║         D llhttp Wrapper - Comprehensive Test Suite     ║\x1b[0m");
+    writeln("\x1b[1;36m║         Wire - Comprehensive Test Suite                 ║\x1b[0m");
     writeln("\x1b[1;36m╚══════════════════════════════════════════════════════════╝\x1b[0m");
     
     testSection("Happy Path Tests");

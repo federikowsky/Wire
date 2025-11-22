@@ -1,4 +1,4 @@
-module llhttp.bindings;
+module wire.bindings;
 
 import core.stdc.stdint;
 
