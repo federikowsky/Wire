@@ -3,6 +3,7 @@ import std.exception;
 import core.exception;
 import std.string : format;
 import std.array : appender;
+import core.time : MonoTime, Duration;
 import wire;
 import wire.parser;
 import wire.types;
@@ -13,19 +14,52 @@ import wire.types;
 
 private int passedTests = 0;
 private int failedTests = 0;
+private bool verboseMode = false;
+private Duration totalTime;
+
+void setVerbose(bool v) {
+    verboseMode = v;
+}
 
 void runTest(string name, void function() test) {
     writef("  %-50s ... ", name);
     stdout.flush();
+    
+    auto startTime = MonoTime.currTime;
+    
     try {
         test();
-        writeln("\x1b[32mPASS\x1b[0m");
+        auto elapsed = MonoTime.currTime - startTime;
+        totalTime += elapsed;
+        
+        if (verboseMode) {
+            writefln("\x1b[32mPASS\x1b[0m (%s)", formatDuration(elapsed));
+        } else {
+            writeln("\x1b[32mPASS\x1b[0m");
+        }
         passedTests++;
     } catch (Throwable e) {
+        auto elapsed = MonoTime.currTime - startTime;
+        totalTime += elapsed;
+        
         writeln("\x1b[31mFAIL\x1b[0m");
         writeln("    Error: ", e.msg);
         writeln("    File: ", e.file, ":", e.line);
+        if (verboseMode) {
+            writeln("    Time: ", formatDuration(elapsed));
+        }
         failedTests++;
+    }
+}
+
+string formatDuration(Duration d) {
+    auto usecs = d.total!"usecs";
+    if (usecs < 1000) {
+        return format("%d μs", usecs);
+    } else if (usecs < 1_000_000) {
+        return format("%.2f ms", usecs / 1000.0);
+    } else {
+        return format("%.2f s", usecs / 1_000_000.0);
     }
 }
 
@@ -352,10 +386,24 @@ void testChunkedEncoding() {
 // Main Test Runner
 // ============================================================================
 
-void main() {
+void main(string[] args) {
+    // Parse command line arguments
+    foreach (arg; args[1 .. $]) {
+        if (arg == "-v" || arg == "--verbose") {
+            setVerbose(true);
+        }
+    }
+    
     writeln("\n\x1b[1;36m╔══════════════════════════════════════════════════════════╗\x1b[0m");
     writeln("\x1b[1;36m║         Wire - Comprehensive Test Suite                 ║\x1b[0m");
     writeln("\x1b[1;36m╚══════════════════════════════════════════════════════════╝\x1b[0m");
+    
+    if (verboseMode) {
+        writeln("\n\x1b[1;33m[VERBOSE MODE]\x1b[0m");
+        writeln("Showing detailed timing and output information\n");
+    }
+    
+    auto overallStart = MonoTime.currTime;
     
     testSection("Happy Path Tests");
     runTest("Simple GET request", &testSimpleGET);
@@ -396,6 +444,8 @@ void main() {
     runTest("API request with JSON", &testAPIRequest);
     runTest("Chunked encoding", &testChunkedEncoding);
     
+    auto overallElapsed = MonoTime.currTime - overallStart;
+    
     // Summary
     import std.array : replicate;
     writeln("\n\x1b[1;36m" ~ replicate("─", 60) ~ "\x1b[0m");
@@ -403,6 +453,17 @@ void main() {
     writeln("  \x1b[32mPassed:\x1b[0m ", passedTests);
     writeln("  \x1b[31mFailed:\x1b[0m ", failedTests);
     writeln("  \x1b[1mTotal:\x1b[0m  ", passedTests + failedTests);
+    
+    if (verboseMode) {
+        writeln("\n\x1b[1mPerformance:\x1b[0m");
+        writeln("  Total time:    ", formatDuration(overallElapsed));
+        writeln("  Test time:     ", formatDuration(totalTime));
+        writeln("  Overhead:      ", formatDuration(overallElapsed - totalTime));
+        writeln("  Avg per test:  ", formatDuration(totalTime / (passedTests + failedTests)));
+        
+        auto testsPerSec = (passedTests + failedTests) / (overallElapsed.total!"usecs" / 1_000_000.0);
+        writeln("  Tests/second:  ", format("%.2f", testsPerSec));
+    }
     
     if (failedTests == 0) {
         writeln("\n\x1b[1;32m✓ All tests passed!\x1b[0m\n");

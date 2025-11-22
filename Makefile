@@ -39,7 +39,7 @@ TEST_FILE    := $(SRC_DIR)/tests/tests.d
 # Phony Targets
 # ============================================================================
 
-.PHONY: all clean test lib help debug
+.PHONY: all clean test test-verbose test-debug lib help debug
 
 # Default Target
 all: test
@@ -48,12 +48,14 @@ all: test
 help:
 	@echo "Wire - High-Performance HTTP Parser - Build Targets"
 	@echo "===================================================="
-	@echo "  make all      - Build and run tests (default)"
-	@echo "  make test     - Compile and run test suite"
-	@echo "  make lib      - Build static library"
-	@echo "  make debug    - Build tests with debug symbols"
-	@echo "  make clean    - Remove all build artifacts"
-	@echo "  make help     - Show this help message"
+	@echo "  make all           - Build and run tests (default)"
+	@echo "  make test          - Compile and run test suite"
+	@echo "  make test-verbose  - Run tests with detailed timing"
+	@echo "  make test-debug    - Run debug tests (step-by-step analysis)"
+	@echo "  make lib           - Build static library"
+	@echo "  make debug         - Build tests with debug symbols"
+	@echo "  make clean         - Remove all build artifacts"
+	@echo "  make help          - Show this help message"
 	@echo ""
 	@echo "Build directory: $(BUILD_DIR)/"
 	@echo "Library output:  $(LIB_OUT)"
@@ -87,6 +89,28 @@ test: $(TEST_BIN)
 	@$(TEST_BIN)
 	@echo ""
 	@echo "✓ All tests passed!"
+
+# Run tests with verbose output (timing, stats)
+test-verbose: $(TEST_BIN)
+	@echo ""
+	@echo "Running Test Suite (Verbose Mode)..."
+	@echo "======================================"
+	@$(TEST_BIN) --verbose
+	@echo ""
+
+# Run debug tests (detailed step-by-step analysis)
+DEBUG_BIN := $(BUILD_DIR)/debug_tests
+DEBUG_FILE := $(SRC_DIR)/tests/debug_tests.d
+
+test-debug: $(DEBUG_BIN)
+	@echo ""
+	@echo "Running Debug Test Suite..."
+	@echo "============================"
+	@$(DEBUG_BIN)
+
+$(DEBUG_BIN): $(C_OBJECTS) $(D_FILES) $(DEBUG_FILE) | $(BUILD_DIR)
+	@echo "[DC] Building debug tests: $@"
+	@$(DC) $(DFLAGS) $(D_FILES) $(DEBUG_FILE) $(C_OBJECTS) -of=$@ -od=$(BUILD_DIR)
 
 $(TEST_BIN): $(C_OBJECTS) $(D_FILES) $(TEST_FILE) | $(BUILD_DIR)
 	@echo "[DC] Building tests: $@"
