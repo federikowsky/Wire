@@ -270,6 +270,8 @@ void main() {
     );
     
     // Test 3: API request with JWT token and large JSON payload
+    auto restApiBody = `{"users":[{"id":1,"name":"Alice Johnson","email":"alice@example.com","role":"admin","active":true,"settings":{"theme":"dark","notifications":true,"language":"en"}},{"id":2,"name":"Bob Smith","email":"bob@example.com","role":"user","active":true,"settings":{"theme":"light","notifications":false,"language":"de"}},{"id":3,"name":"Charlie Brown","email":"charlie@example.com","role":"moderator","active":false,"settings":{"theme":"auto","notifications":true,"language":"fr"}},{"id":4,"name":"Diana Prince","email":"diana@example.com","role":"user","active":true,"settings":{"theme":"dark","notifications":true,"language":"en"}}],"metadata":{"batch_id":"batch_2024_001","timestamp":"2024-11-21T12:00:00Z"}}`;
+    
     debugTest(
         "REST API POST with JWT Token & Large JSON Payload",
         cast(const(ubyte)[])(
@@ -285,9 +287,9 @@ void main() {
             "X-API-Key: pk_live_51HqJ8KLx2S0y9V8z7W6t5U4r3Q2p1O0n9M8l7K6j5I4h3G2f1E0d9C8b7A6\r\n" ~
             "User-Agent: MyApp/2.5.3 (iOS 17.0; iPhone15,2)\r\n" ~
             "Connection: keep-alive\r\n" ~
-            "Content-Length: 612\r\n" ~
+            format("Content-Length: %d\r\n", restApiBody.length) ~
             "\r\n" ~
-            `{"users":[{"id":1,"name":"Alice Johnson","email":"alice@example.com","role":"admin","active":true,"settings":{"theme":"dark","notifications":true,"language":"en"}},{"id":2,"name":"Bob Smith","email":"bob@example.com","role":"user","active":true,"settings":{"theme":"light","notifications":false,"language":"de"}},{"id":3,"name":"Charlie Brown","email":"charlie@example.com","role":"moderator","active":false,"settings":{"theme":"auto","notifications":true,"language":"fr"}},{"id":4,"name":"Diana Prince","email":"diana@example.com","role":"user","active":true,"settings":{"theme":"dark","notifications":true,"language":"en"}}],"metadata":{"batch_id":"batch_2024_001","timestamp":"2024-11-21T12:00:00Z"}}`
+            restApiBody
         )
     );
     
@@ -309,6 +311,8 @@ void main() {
     );
     
     // Test 5: Webhook with large payload
+    auto webhookBody = `{"id":"evt_1234567890","object":"event","api_version":"2023-10-16","created":1700654321,"data":{"object":{"id":"pi_1234567890","object":"payment_intent","amount":50000,"amount_capturable":0,"amount_received":50000,"application":null,"canceled_at":null,"cancellation_reason":null,"capture_method":"automatic","client_secret":"pi_123_secret_456","confirmation_method":"automatic","created":1700654300,"currency":"usd","customer":"cus_abc123","description":"Payment for Order #12345","invoice":null,"last_payment_error":null,"livemode":true,"metadata":{"order_id":"12345","customer_email":"john@example.com","product_name":"Premium Subscription"},"next_action":null,"payment_method":"pm_1234567890","payment_method_types":["card"],"processing":null,"receipt_email":"john@example.com","setup_future_usage":null,"shipping":{"address":{"city":"San Francisco","country":"US","line1":"123 Market St","line2":"Suite 456","postal_code":"94102","state":"CA"},"carrier":null,"name":"John Doe","phone":"+14155551234","tracking_number":null},"source":null,"statement_descriptor":"MYCOMPANY*PREMIUM","statement_descriptor_suffix":null,"status":"succeeded","transfer_data":null,"transfer_group":null}},"livemode":true,"pending_webhooks":1,"request":{"id":"req_abc123","idempotency_key":"unique_key_12345"},"type":"payment_intent.succeeded"}`;
+    
     debugTest(
         "Webhook Event with Large Payload (30+ Headers)",
         cast(const(ubyte)[])(
@@ -331,9 +335,9 @@ void main() {
             "CF-Connecting-IP: 54.187.174.169\r\n" ~
             "CF-IPCountry: US\r\n" ~
             "Connection: keep-alive\r\n" ~
-            "Content-Length: 1247\r\n" ~
+            format("Content-Length: %d\r\n", webhookBody.length) ~
             "\r\n" ~
-            `{"id":"evt_1234567890","object":"event","api_version":"2023-10-16","created":1700654321,"data":{"object":{"id":"pi_1234567890","object":"payment_intent","amount":50000,"amount_capturable":0,"amount_received":50000,"application":null,"canceled_at":null,"cancellation_reason":null,"capture_method":"automatic","client_secret":"pi_123_secret_456","confirmation_method":"automatic","created":1700654300,"currency":"usd","customer":"cus_abc123","description":"Payment for Order #12345","invoice":null,"last_payment_error":null,"livemode":true,"metadata":{"order_id":"12345","customer_email":"john@example.com","product_name":"Premium Subscription"},"next_action":null,"payment_method":"pm_1234567890","payment_method_types":["card"],"processing":null,"receipt_email":"john@example.com","setup_future_usage":null,"shipping":{"address":{"city":"San Francisco","country":"US","line1":"123 Market St","line2":"Suite 456","postal_code":"94102","state":"CA"},"carrier":null,"name":"John Doe","phone":"+14155551234","tracking_number":null},"source":null,"statement_descriptor":"MYCOMPANY*PREMIUM","statement_descriptor_suffix":null,"status":"succeeded","transfer_data":null,"transfer_group":null}},"livemode":true,"pending_webhooks":1,"request":{"id":"req_abc123","idempotency_key":"unique_key_12345"},"type":"payment_intent.succeeded"}`
+            webhookBody
         )
     );
     
