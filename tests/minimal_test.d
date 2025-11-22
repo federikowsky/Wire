@@ -1,8 +1,8 @@
 module minimal_test;
 
-import llhttp.parser;
-import llhttp.types;
-import llhttp.bindings;
+import wire.parser;
+import wire.types;
+import wire.bindings;
 import std.stdio;
 
 void main() {

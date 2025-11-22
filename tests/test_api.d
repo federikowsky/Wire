@@ -1,8 +1,8 @@
 module test_api;
 
 import std.stdio;
-import llhttp.parser;
-import llhttp.types;
+import wire.parser;
+import wire.types;
 
 // Mock data
 const(ubyte)[] rawRequest = cast(const(ubyte)[])"GET /api/v1/status HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n";

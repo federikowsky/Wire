@@ -1,8 +1,8 @@
 module debug_test;
 
 import std.stdio;
-import llhttp.parser;
-import llhttp.types;
+import wire.parser;
+import wire.types;
 
 void main() {
     writeln("Test 1: PUT Request");

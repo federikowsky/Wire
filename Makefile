@@ -10,6 +10,7 @@ AR       := ar
 # Directories
 BUILD_DIR    := build
 SRC_DIR      := source
+TEST_DIR     := tests
 LLHTTP_SRC   := $(SRC_DIR)/wire/c
 D_SOURCES    := $(SRC_DIR)/wire
 
@@ -33,7 +34,7 @@ D_FILES      := $(D_SOURCES)/types.d \
                 $(D_SOURCES)/parser.d \
                 $(D_SOURCES)/package.d
 
-TEST_FILE    := $(SRC_DIR)/tests/tests.d
+TEST_FILE    := $(TEST_DIR)/tests.d
 
 # ============================================================================
 # Phony Targets
@@ -100,7 +101,7 @@ test-verbose: $(TEST_BIN)
 
 # Run debug tests (detailed step-by-step analysis)
 DEBUG_BIN := $(BUILD_DIR)/debug_tests
-DEBUG_FILE := $(SRC_DIR)/tests/debug_tests.d
+DEBUG_FILE := $(TEST_DIR)/debug_tests.d
 
 test-debug: $(DEBUG_BIN)
 	@echo ""
