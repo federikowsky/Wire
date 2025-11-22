@@ -1,0 +1,31 @@
+# Dlang specific
+*.o
+*.obj
+*.exe
+*.out
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.dmd
+*.di
+*.json # For dub.selections.json and other generated JSON files
+dub.selections.json
+dub.lock
+.dub/
+build/
+bin/
+obj/
+
+# Common OS and editor files
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.swp
+*~
+.vscode/
+.idea/
+
+specs.md

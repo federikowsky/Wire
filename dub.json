@@ -1,0 +1,22 @@
+{
+    "name": "llhttp-d",
+    "description": "Ultra-performance llhttp wrapper for D",
+    "authors": [
+        "Antigravity"
+    ],
+    "license": "MIT",
+    "targetType": "library",
+    "dflags": [
+        "-O3",
+        "-mcpu=native",
+        "-boundscheck=off"
+    ],
+    "sourcePaths": [
+        "source",
+        "source/llhttp/c"
+    ],
+    "importPaths": [
+        "source"
+    ],
+    "dependencies": {}
+}
