@@ -86,7 +86,8 @@ align(64) struct ParsedHttpRequest {
         ubyte versionMinor;     // [51]
         ubyte flags;            // [52]
         ubyte numHeaders;       // [53]
-        ubyte[10] _padding;     // [54-63] Zeroed
+        bool messageComplete;   // [54] - NEW: set by on_message_complete callback
+        ubyte[9] _padding;      // [55-63] Zeroed (was 10 bytes, now 9)
     }
     RoutingInfo routing;
     
@@ -112,6 +113,7 @@ align(64) struct ParsedHttpRequest {
     void reset() pure nothrow @nogc {
         // Reset Routing: basta azzerare i primi 64 byte
         routing = RoutingInfo.init;
+        routing.messageComplete = false;  // Explicitly reset completion flag
         // Reset Content: basta azzerare il count (fatto in routing)
         content.body = StringView.makeNull();
         content.errorCode = 0;

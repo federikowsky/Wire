@@ -128,6 +128,9 @@ extern(C) int cb_on_body(llhttp_t* p, const(char)* at, size_t length) @nogc noth
 }
 
 extern(C) int cb_on_message_complete(llhttp_t* p) @nogc nothrow {
+    Parser* parser = cast(Parser*) p.data;
+    // Set completion flag - used by Aurora to detect complete requests
+    parser.request.routing.messageComplete = true;
     return 0;
 }
 
@@ -174,20 +177,23 @@ struct ParserPool {
     
     // Acquire the thread's parser
     static Parser* acquire() @nogc nothrow {
-        if (t_busy) {
-            return null; // Should not happen in correct architecture
+        // If parser exists but is busy, it means we're re-parsing
+        // (e.g., incremental parsing in a loop where assignment
+        // happens before old destructor runs). This is safe because
+        // it's the same thread-local parser being reused.
+        if (t_parser !is null) {
+            t_busy = true;
+            // Pass the actual pointer to reset
+            t_parser.reset(t_parser);
+            return t_parser;
         }
         
-        if (t_parser is null) {
-            // Lazy Initialization: Use calloc to ZERO the memory
-            t_parser = cast(Parser*) calloc(1, Parser.sizeof);
-            // Pass the actual allocated pointer to setup
-            t_parser.setup(t_parser);
-        }
+        // Lazy Initialization: Use calloc to ZERO the memory
+        t_parser = cast(Parser*) calloc(1, Parser.sizeof);
+        // Pass the actual allocated pointer to setup
+        t_parser.setup(t_parser);
         
         t_busy = true;
-        // Pass the actual pointer to reset
-        t_parser.reset(t_parser);
         return t_parser;
     }
     
