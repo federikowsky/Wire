@@ -16,7 +16,6 @@ D_SOURCES    := $(SRC_DIR)/wire
 
 # Output
 LIB_NAME     := libwire.a
-TEST_BIN     := $(BUILD_DIR)/tests
 LIB_OUT      := $(BUILD_DIR)/$(LIB_NAME)
 
 # Compiler Flags
@@ -29,12 +28,11 @@ DFLAGS_LIB   := $(DFLAGS) -lib
 C_SOURCES    := $(wildcard $(LLHTTP_SRC)/*.c)
 C_OBJECTS    := $(patsubst $(LLHTTP_SRC)/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES))
 
-D_FILES      := $(D_SOURCES)/types.d \
-                $(D_SOURCES)/bindings.d \
-                $(D_SOURCES)/parser.d \
-                $(D_SOURCES)/package.d
+D_FILES      := $(wildcard $(D_SOURCES)/*.d)
 
-TEST_FILE    := $(TEST_DIR)/tests.d
+# Test files (auto-discovered)
+TEST_SOURCES := $(wildcard $(TEST_DIR)/*.d)
+TEST_TARGETS := $(patsubst $(TEST_DIR)/%.d,$(BUILD_DIR)/%,$(TEST_SOURCES))
 
 # ============================================================================
 # Phony Targets
@@ -83,45 +81,49 @@ $(LIB_OUT): $(C_OBJECTS) $(D_FILES) | $(BUILD_DIR)
 	@echo "✓ Library built: $@"
 
 # Build test executable
-test: $(TEST_BIN)
+test: $(BUILD_DIR)/tests
 	@echo ""
 	@echo "Running Test Suite..."
 	@echo "====================="
-	@$(TEST_BIN)
+	@$(BUILD_DIR)/tests
 	@echo ""
 	@echo "✓ All tests passed!"
 
 # Run tests with verbose output (timing, stats)
-test-verbose: $(TEST_BIN)
+test-verbose: $(BUILD_DIR)/tests
 	@echo ""
 	@echo "Running Test Suite (Verbose Mode)..."
 	@echo "======================================"
-	@$(TEST_BIN) --verbose
+	@$(BUILD_DIR)/tests --verbose
 	@echo ""
 
 # Run debug tests (detailed step-by-step analysis)
-DEBUG_BIN := $(BUILD_DIR)/debug_tests
-DEBUG_FILE := $(TEST_DIR)/debug_tests.d
-
-test-debug: $(DEBUG_BIN)
+test-debug: $(BUILD_DIR)/debug_tests
 	@echo ""
 	@echo "Running Debug Test Suite..."
 	@echo "============================"
-	@$(DEBUG_BIN)
+	@$(BUILD_DIR)/debug_tests
 
-$(DEBUG_BIN): $(C_OBJECTS) $(D_FILES) $(DEBUG_FILE) | $(BUILD_DIR)
-	@echo "[DC] Building debug tests: $@"
-	@$(DC) $(DFLAGS) $(D_FILES) $(DEBUG_FILE) $(C_OBJECTS) -of=$@ -od=$(BUILD_DIR)
+# ============================================================================
+# Tests (Pattern Rule - builds any test automatically)
+# ============================================================================
 
-$(TEST_BIN): $(C_OBJECTS) $(D_FILES) $(TEST_FILE) | $(BUILD_DIR)
-	@echo "[DC] Building tests: $@"
-	@$(DC) $(DFLAGS) $(D_FILES) $(TEST_FILE) $(C_OBJECTS) -of=$@ -od=$(BUILD_DIR)
+# Pattern rule: build any test from tests/*.d
+$(BUILD_DIR)/%: $(TEST_DIR)/%.d $(C_OBJECTS) $(D_FILES) | $(BUILD_DIR)
+	@echo "[DC] Building $*..."
+	@$(DC) $(DFLAGS) $(D_FILES) $< $(C_OBJECTS) -of=$@ -od=$(BUILD_DIR)
+	@echo "✓ Built: $@"
+
+# Build all tests
+tests-all: $(TEST_TARGETS)
+	@echo "✓ All tests built in $(BUILD_DIR)/"
+	@echo "  Targets: $(notdir $(TEST_TARGETS))"
 
 # Build debug version
 debug: DFLAGS := $(DFLAGS_DEBUG)
-debug: $(TEST_BIN)
-	@echo "Debug build complete: $(TEST_BIN)"
-	@echo "Run with: lldb $(TEST_BIN)"
+debug: $(BUILD_DIR)/tests
+	@echo "Debug build complete: $(BUILD_DIR)/tests"
+	@echo "Run with: lldb $(BUILD_DIR)/tests"
 
 # ============================================================================
 # Utility Targets
