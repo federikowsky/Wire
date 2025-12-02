@@ -3,23 +3,23 @@ module wire.types;
 import core.stdc.string : memcmp;
 
 /**
- * Rappresenta una vista non-owning su un buffer di caratteri.
+ * Represents a non-owning view over a character buffer.
  * Size: 16 bytes (ptr + len).
- * ABI: Passata in 2 registri (RDI, RSI su System V AMD64).
+ * ABI: Passed in 2 registers (RDI, RSI on System V AMD64).
  */
 struct StringView {
     const(char)* ptr;
     size_t length;
 
-    // --- Costruttori ---
+    // --- Constructors ---
     
-    // Da stringa letterale o slice D
+    // From string literal or D slice
     this(const(char)[] s) pure nothrow @nogc @trusted {
         this.ptr = s.ptr;
         this.length = s.length;
     }
     
-    // Null view (stato iniziale)
+    // Null view (initial state)
     static StringView makeNull() pure nothrow @nogc @safe {
         return StringView(cast(const(char)*)null, 0);
     }
@@ -111,10 +111,10 @@ align(64) struct ParsedHttpRequest {
     
     // Helper methods
     void reset() pure nothrow @nogc {
-        // Reset Routing: basta azzerare i primi 64 byte
+        // Reset Routing: just zero the first 64 bytes
         routing = RoutingInfo.init;
         routing.messageComplete = false;  // Explicitly reset completion flag
-        // Reset Content: basta azzerare il count (fatto in routing)
+        // Reset Content: just zero the count (done in routing)
         content.body = StringView.makeNull();
         content.errorCode = 0;
     }
