@@ -57,16 +57,38 @@ Zero-copy string representation optimized for register passing:
 
 ```d
 struct StringView {
-    const(char)* ptr;    // 8 bytes
-    size_t length;       // 8 bytes
+    const(char)* ptr;    // 8 bytes - pointer to string data
+    size_t length;       // 8 bytes - string length
+
+    // --- Constructors ---
+    this(const(char)[] s) pure nothrow @nogc @trusted;
+    static StringView makeNull() pure nothrow @nogc @safe;
+    
+    // --- Operators ---
+    StringView opSlice(size_t start, size_t end) const pure nothrow @nogc @trusted;
+    bool opEquals(const(char)[] other) const pure nothrow @nogc @trusted;
+    
+    // --- Comparison ---
+    bool equalsIgnoreCase(const(char)[] other) const pure nothrow @nogc @trusted;
+    
+    // --- Range Interface ---
+    bool empty() const pure nothrow @nogc @safe;
+    char front() const pure nothrow @nogc @trusted;
+    void popFront() pure nothrow @nogc @trusted;
+    
+    // --- Null Check ---
+    bool isNull() const pure nothrow @nogc @safe;  // ptr is null (not found vs empty)
+    
+    // --- Debug ---
+    string toString() const;  // uses GC, for debugging only
 }
 ```
 
-**Features**:
-- `@nogc` all methods
-- Case-insensitive comparison
-- Slicing without allocation
-- Implicit conversion to `string` only when needed
+**Key Methods**:
+- `makeNull()` - Creates a null view (indicates "not found")
+- `isNull()` - Returns true if ptr is null (distinguishes "not found" from "empty string")
+- `equalsIgnoreCase()` - Case-insensitive ASCII comparison
+- `opSlice()` - Zero-allocation substring
 
 #### ParsedHttpRequest (64-byte aligned)
 
@@ -74,31 +96,45 @@ Cache-optimized request structure with hot/cold data separation:
 
 ```d
 align(64) struct ParsedHttpRequest {
-    // HOT PATH DATA (first 64 bytes - L1 cache line)
-    RoutingInfo {
-        StringView method;        // GET, POST, etc.
-        StringView path;          // /api/users
-        StringView query;         // page=2&limit=10 (without '?')
-        ubyte versionMajor;       // 1
-        ubyte versionMinor;       // 1 or 0
-        ubyte numHeaders;         // 0-64
-        ubyte flags;              // keep-alive, upgrade
+    // --- CACHE LINE 0: ROUTING INFO (0-63 bytes) ---
+    align(64) struct RoutingInfo {
+        StringView method;      // [0-15]  GET, POST, etc.
+        StringView path;        // [16-31] /api/users
+        StringView query;       // [32-47] page=2&limit=10 (without '?')
+        ushort statusCode;      // [48-49] HTTP status (for responses)
+        ubyte versionMajor;     // [50]    1
+        ubyte versionMinor;     // [51]    0 or 1
+        ubyte flags;            // [52]    keep-alive (0x01), upgrade (0x02)
+        ubyte numHeaders;       // [53]    0-64
+        bool messageComplete;   // [54]    set by on_message_complete callback
+        ubyte[9] _padding;      // [55-63] alignment padding
     }
+    RoutingInfo routing;
     
-    // COLD PATH DATA (separate cache lines)
-    ContentInfo {
-        Header[64] headers;       // name/value pairs
-        StringView body;          // request body
-        int errorCode;            // 0 = success
-        const(char)* errorPos;    // error position
+    static assert(RoutingInfo.sizeof == 64);  // Exactly one cache line
+    
+    // --- CACHE LINE 1+: CONTENT INFO ---
+    align(64) struct ContentInfo {
+        align(32) struct HttpHeader {
+            StringView name;    // Header name
+            StringView value;   // Header value
+        }
+        
+        enum MAX_HEADERS = 64;
+        HttpHeader[MAX_HEADERS] headers;  // Fixed array
+        
+        StringView body;        // Request body
+        const(char)* errorPos;  // Error position in input
+        int errorCode;          // 0 = success
     }
+    ContentInfo content;
 }
 ```
 
 **Benefits**:
-- Routing decisions use only first cache line
+- Routing decisions use only first cache line (64 bytes)
 - Header scanning deferred until needed
-- Predictable memory layout
+- Predictable memory layout for SIMD optimization
 
 ---
 
@@ -571,7 +607,7 @@ Built on [llhttp](https://github.com/nodejs/llhttp) (MIT License) by Fedor Indut
 
 All benchmarks use:
 - **Compiler**: LDC 1.41 with `-O3 -mcpu=native`
-- **Platform**: macOS ARM64 (M2 chip)
+- **Platform**: macOS ARM64 (M4 chip)
 - **Timing**: `core.time.MonoTime` (microsecond precision)
 - **Measurement**: Median of 3 runs per test
 - **Overhead**: Framework overhead (~171 μs total) excluded from per-test times
