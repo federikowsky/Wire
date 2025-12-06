@@ -136,6 +136,9 @@ align(64) struct ParsedHttpRequest {
 - Header scanning deferred until needed
 - Predictable memory layout for SIMD optimization
 
+> [!NOTE]
+> The `messageComplete` flag in `RoutingInfo` is set by the `on_message_complete` callback and can be used by server integrations (e.g., Aurora) to detect when a full HTTP message has been received.
+
 ---
 
 ## API Reference
@@ -583,6 +586,9 @@ Wire follows llhttp's strict HTTP spec compliance:
 - ❌ WebSocket upgrade handling (headers parsed, but no WebSocket protocol)
 - ❌ Chunked encoding parsing (headers detected, body as-is)
 - ❌ Multipart body parsing (body provided as raw bytes)
+
+> [!NOTE]
+> The `getVersion()` method contains placeholder code for HTTP/2.0 return value, but this is **not** actual HTTP/2 support. The parser is configured for HTTP/1.x only.
 
 ### Future Enhancements
 

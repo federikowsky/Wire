@@ -149,17 +149,16 @@ Happy Path Tests
 ## Architecture
 
 ```
-wire/
+source/wire/
 ├── bindings.d    # C interface to llhttp
 ├── types.d       # StringView, ParsedHttpRequest
 ├── parser.d      # ParserPool, parseHTTP()
-└── package.d     # Public API exports
-
-c/
-├── llhttp.c      # Node.js llhttp implementation
-├── llhttp.h      # C header
-├── api.c         # llhttp API functions
-└── http.c        # HTTP protocol parsing
+├── package.d     # Public API exports
+└── c/
+    ├── llhttp.c  # Node.js llhttp implementation
+    ├── llhttp.h  # C header
+    ├── api.c     # llhttp API functions
+    └── http.c    # HTTP protocol parsing
 ```
 
 ## Thread Safety
