@@ -70,7 +70,26 @@ extern(C) int cb_on_method(llhttp_t* p, const(char)* at, size_t length) @nogc no
 
 extern(C) int cb_on_url(llhttp_t* p, const(char)* at, size_t length) @nogc nothrow {
     Parser* parser = cast(Parser*) p.data;
-    parser.request.routing.path = StringView(at[0 .. length]);
+    
+    // Find '?' to separate path from query string
+    size_t queryStart = length; // Default: no query
+    for (size_t i = 0; i < length; i++) {
+        if (at[i] == '?') {
+            queryStart = i;
+            break;
+        }
+    }
+    
+    // Path is everything before '?'
+    parser.request.routing.path = StringView(at[0 .. queryStart]);
+    
+    // Query is everything after '?' (excluding the '?' itself)
+    if (queryStart < length) {
+        parser.request.routing.query = StringView(at[queryStart + 1 .. length]);
+    } else {
+        parser.request.routing.query = StringView.makeNull();
+    }
+    
     return 0;
 }
 

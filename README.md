@@ -29,6 +29,7 @@ void handleRequest(const(ubyte)[] data) @nogc nothrow {
     // Zero-copy access to parsed data
     auto method = req.getMethod();        // "GET"
     auto path = req.getPath();            // "/api/users"
+    auto query = req.getQuery();          // "page=2&limit=10"
     auto host = req.getHeader("Host");    // "example.com"
     auto keepAlive = req.shouldKeepAlive(); // true/false
     
@@ -80,6 +81,9 @@ StringView getHeader(string name)  // Get header (case-insensitive)
 bool hasHeader(string name)        // Check header existence
 auto getHeaders()                  // Iterate all headers
 
+StringView getQueryParam(string name)  // Get query parameter value
+bool hasQueryParam(string name)        // Check query parameter existence
+
 bool shouldKeepAlive()             // Connection: keep-alive
 bool isUpgrade()                   // Connection: upgrade
 
@@ -88,6 +92,18 @@ const(char)* getErrorReason()      // Error description
 ```
 
 All methods are `@nogc nothrow` and return zero-copy `StringView` or primitives.
+
+### Query Parameter Example
+
+```d
+// URL: /search?q=hello&page=2&limit=10
+auto req = parseHTTP(data);
+
+if (req.hasQueryParam("q")) {
+    auto query = req.getQueryParam("q");  // "hello"
+    auto page = req.getQueryParam("page"); // "2"
+}
+```
 
 ## Performance
 
@@ -106,7 +122,7 @@ All methods are `@nogc nothrow` and return zero-copy `StringView` or primitives.
 
 ## Testing
 
-Comprehensive test suite with 23+ tests:
+Comprehensive test suite with 45 tests covering happy paths, edge cases, error handling, and security scenarios:
 
 ```bash
 $ make test
@@ -125,9 +141,9 @@ Happy Path Tests
   HEAD request                                       ... PASS
   OPTIONS request                                    ... PASS
 
-... (16 more tests)
+... (38 more tests)
 
-✓ All tests passed! (23/23)
+✓ All tests passed! (45/45)
 ```
 
 ## Architecture

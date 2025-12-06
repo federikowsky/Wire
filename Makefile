@@ -19,8 +19,8 @@ LIB_NAME     := libwire.a
 LIB_OUT      := $(BUILD_DIR)/$(LIB_NAME)
 
 # Compiler Flags
-CFLAGS       := -O3 -march=native -fPIC -Wall
-DFLAGS       := -O3 -mcpu=native -I$(SRC_DIR) -betterC=false
+CFLAGS       := -O2 -fPIC -Wall
+DFLAGS       := -O2 -I$(SRC_DIR)
 DFLAGS_DEBUG := -g -I$(SRC_DIR)
 DFLAGS_LIB   := $(DFLAGS) -lib
 

@@ -1,37 +1,42 @@
 {
     "name": "wire",
+    "version": "1.0.0",
     "description": "High-performance, zero-allocation HTTP parser for D - wrapping llhttp",
-    "authors": [
-        "Federico Filippi"
-    ],
+    "authors": ["Federico Filippi"],
     "license": "MIT",
+    "homepage": "https://github.com/federikowsky/Wire",
+    "copyright": "Copyright 2024 Federico Filippi",
+    
     "targetType": "library",
-    "dependencies": {},
-    "sourcePaths": [
-        "source/wire",
-        "source/wire/c"
+    "sourcePaths": ["source/wire"],
+    "importPaths": ["source"],
+    
+    "preBuildCommands-posix": [
+        "mkdir -p $PACKAGE_DIR/.dub/obj",
+        "cc -c -O2 -fPIC $PACKAGE_DIR/source/wire/c/api.c -o $PACKAGE_DIR/.dub/obj/api.o",
+        "cc -c -O2 -fPIC $PACKAGE_DIR/source/wire/c/http.c -o $PACKAGE_DIR/.dub/obj/http.o",
+        "cc -c -O2 -fPIC $PACKAGE_DIR/source/wire/c/llhttp.c -o $PACKAGE_DIR/.dub/obj/llhttp.o"
     ],
-    "dflags": [
-        "-betterC=false"
+    
+    "preBuildCommands-windows": [
+        "if not exist \"%PACKAGE_DIR%\\.dub\\obj\" mkdir \"%PACKAGE_DIR%\\.dub\\obj\"",
+        "cl /c /O2 \"%PACKAGE_DIR%\\source\\wire\\c\\api.c\" /Fo\"%PACKAGE_DIR%\\.dub\\obj\\api.obj\"",
+        "cl /c /O2 \"%PACKAGE_DIR%\\source\\wire\\c\\http.c\" /Fo\"%PACKAGE_DIR%\\.dub\\obj\\http.obj\"",
+        "cl /c /O2 \"%PACKAGE_DIR%\\source\\wire\\c\\llhttp.c\" /Fo\"%PACKAGE_DIR%\\.dub\\obj\\llhttp.obj\""
     ],
-    "lflags": [],
+    
+    "postBuildCommands-posix": [
+        "ar rcs $PACKAGE_DIR/libwire.a $PACKAGE_DIR/.dub/obj/api.o $PACKAGE_DIR/.dub/obj/http.o $PACKAGE_DIR/.dub/obj/llhttp.o"
+    ],
+    
+    "postBuildCommands-windows": [
+        "lib /OUT:\"%PACKAGE_DIR%\\wire.lib\" \"%PACKAGE_DIR%\\wire.lib\" \"%PACKAGE_DIR%\\.dub\\obj\\api.obj\" \"%PACKAGE_DIR%\\.dub\\obj\\http.obj\" \"%PACKAGE_DIR%\\.dub\\obj\\llhttp.obj\""
+    ],
+    
     "buildTypes": {
         "release": {
-            "buildOptions": [
-                "releaseMode",
-                "optimize",
-                "inline"
-            ],
-            "dflags": [
-                "-O3",
-                "-mcpu=native"
-            ]
-        },
-        "debug": {
-            "buildOptions": [
-                "debugMode",
-                "debugInfo"
-            ]
+            "dflags-ldc2": ["-O2", "-release", "-enable-inlining"],
+            "dflags-dmd": ["-O", "-release", "-inline"]
         }
     }
 }

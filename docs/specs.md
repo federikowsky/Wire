@@ -1,9 +1,10 @@
 # Wire - High-Performance HTTP Parser for D
 
-**Version**: 1.0.0  
-**Status**: Production Ready  
-**License**: MIT  
-**Repository**: [github.com/federikowsky/Wire](https://github.com/federikowsky/Wire)
+> **Version**: 1.0.0  
+> **Status**: Production Ready  
+> **License**: MIT  
+> **Repository**: [github.com/federikowsky/Wire](https://github.com/federikowsky/Wire)  
+> **Last Updated**: 2025-12-06
 
 ---
 
@@ -77,7 +78,7 @@ align(64) struct ParsedHttpRequest {
     RoutingInfo {
         StringView method;        // GET, POST, etc.
         StringView path;          // /api/users
-        StringView query;         // ?page=2
+        StringView query;         // page=2&limit=10 (without '?')
         ubyte versionMajor;       // 1
         ubyte versionMinor;       // 1 or 0
         ubyte numHeaders;         // 0-64
@@ -138,6 +139,30 @@ auto path = req.getPath();
     ubyte getVersionMajor();             // 1
     ubyte getVersionMinor();             // 0 or 1
     StringView getVersion();             // "1.0" or "1.1"
+}
+```
+
+### Query Parameter Methods
+
+```d
+@nogc @trusted pure nothrow
+{
+    StringView getQueryParam(const(char)[] name);  // Get parameter value
+    bool hasQueryParam(const(char)[] name);        // Check parameter existence
+}
+```
+
+**Query Parameter Example**:
+```d
+// URL: /search?q=hello&page=2&limit=10
+auto req = parseHTTP(data);
+
+auto query = req.getQueryParam("q");      // "hello"
+auto page = req.getQueryParam("page");    // "2"
+auto limit = req.getQueryParam("limit");  // "10"
+
+if (req.hasQueryParam("debug")) {
+    // ?debug flag was present
 }
 ```
 
@@ -242,7 +267,7 @@ All benchmarks run on: **LDC 1.41, macOS ARM64, M2 chip**
 
 ```bash
 make              # Build and run tests
-make test         # Run test suite (23 tests)
+make test         # Run test suite (45 tests)
 make test-verbose # Run tests with detailed timing
 make test-debug   # Run debug tests with step-by-step analysis
 make lib          # Build static library (libwire.a)
@@ -295,12 +320,14 @@ void handleRequest(const(ubyte)[] data) @nogc nothrow {
 
 ### Test Coverage
 
-**Standard Tests** (23 tests):
-- ✅ HTTP methods (GET, POST, PUT, DELETE, HEAD, OPTIONS)
-- ✅ Headers (multiple, case-insensitive, iteration, overflow)
+**Standard Tests** (45 tests):
+- ✅ HTTP methods (GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH, TRACE, CONNECT)
+- ✅ Query strings (parsing, getQueryParam, flags, URL encoding)
+- ✅ Headers (multiple, case-insensitive, empty values, iteration, overflow)
 - ✅ HTTP versions (1.0, 1.1, keep-alive, close)
-- ✅ Edge cases (long paths, long values, header limits)
-- ✅ Error handling (invalid version, malformed headers)
+- ✅ Edge cases (long paths, long values, header limits, null bytes)
+- ✅ Error handling (invalid version, malformed requests, invalid headers)
+- ✅ Security (multiple same-name headers, special characters, URL encoding)
 - ✅ Real-world scenarios (browser, API, chunked encoding)
 
 **Debug Tests** (7 complex scenarios):
@@ -315,7 +342,7 @@ void handleRequest(const(ubyte)[] data) @nogc nothrow {
 ### Running Tests
 
 ```bash
-# Quick test (23 tests, ~220 μs total)
+# Quick test (45 tests)
 make test
 
 # Verbose mode (with timing stats)
@@ -527,7 +554,6 @@ Wire follows llhttp's strict HTTP spec compliance:
 - [ ] Configurable header limit
 - [ ] HTTP/2 support
 - [ ] Fuzzing integration (afl, libFuzzer)
-- [ ] Dub package publication
 
 ---
 

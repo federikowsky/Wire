@@ -67,6 +67,9 @@ struct StringView {
     char front() const pure nothrow @nogc @trusted => *ptr;
     void popFront() pure nothrow @nogc @trusted { ptr++; length--; }
     
+    // Null check (distinguishes "not found" from "empty value")
+    bool isNull() const pure nothrow @nogc @safe => ptr is null;
+    
     // Debug
     string toString() const => ptr ? ptr[0 .. length].idup : "(null)"; 
 }
@@ -150,11 +153,67 @@ align(64) struct ParsedHttpRequest {
     }
     
     bool hasHeader(const(char)[] name) const pure nothrow @nogc @trusted {
-        return !getHeader(name).empty;
+        return !getHeader(name).isNull;
     }
     
     // Body
     StringView getBody() const pure nothrow @nogc @safe { return content.body; }
+    
+    // Query String Parameter Extraction
+    // Usage: auto page = req.getQueryParam("page"); // "2" from "?page=2&limit=10"
+    StringView getQueryParam(const(char)[] name) const pure nothrow @nogc @trusted {
+        auto query = routing.query;
+        if (query.isNull || query.empty) return StringView.makeNull();
+        
+        const(char)* p = query.ptr;
+        const(char)* end = query.ptr + query.length;
+        
+        while (p < end) {
+            // Find start of key
+            const(char)* keyStart = p;
+            
+            // Find '=' or '&' or end
+            while (p < end && *p != '=' && *p != '&') p++;
+            
+            size_t keyLen = p - keyStart;
+            
+            // Check if this is our key
+            bool matches = (keyLen == name.length);
+            if (matches) {
+                for (size_t i = 0; i < keyLen; i++) {
+                    if (keyStart[i] != name[i]) {
+                        matches = false;
+                        break;
+                    }
+                }
+            }
+            
+            if (p < end && *p == '=') {
+                p++; // skip '='
+                const(char)* valueStart = p;
+                
+                // Find '&' or end
+                while (p < end && *p != '&') p++;
+                
+                if (matches) {
+                    return StringView(valueStart[0 .. p - valueStart]);
+                }
+            } else if (matches) {
+                // Key without value (e.g., "?flag&other=1")
+                return StringView("");
+            }
+            
+            // Skip '&' if present
+            if (p < end && *p == '&') p++;
+        }
+        
+        return StringView.makeNull();
+    }
+    
+    // Check if query parameter exists
+    bool hasQueryParam(const(char)[] name) const pure nothrow @nogc @trusted {
+        return !getQueryParam(name).isNull;
+    }
     
     // Flags
     bool shouldKeepAlive() const pure nothrow @nogc @safe {
