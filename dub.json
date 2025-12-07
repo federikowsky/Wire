@@ -1,6 +1,5 @@
 {
     "name": "wire",
-    "version": "1.0.0",
     "description": "High-performance, zero-allocation HTTP parser for D - wrapping llhttp",
     "authors": ["Federico Filippi"],
     "license": "MIT",
