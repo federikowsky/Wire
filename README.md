@@ -1,17 +1,48 @@
 # Wire
 
-**High-performance, zero-allocation HTTP parser for D**
+High-performance, zero-allocation HTTP parser for D.
 
-Wire is a D language wrapper around the battle-tested [llhttp](https://github.com/nodejs/llhttp) C library, designed for extreme performance with zero allocations and cache-aware data structures.
+Built on [llhttp](https://github.com/nodejs/llhttp), the HTTP parser that powers Node.js.
 
-## Features
+[![DUB](https://img.shields.io/dub/v/wire)](https://code.dlang.org/packages/wire)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![D](https://img.shields.io/badge/D-2.105%2B-red.svg)](https://dlang.org/)
 
-- ✅ **Zero Allocations**: Complete parsing without GC pressure
-- ✅ **@nogc Compatible**: All core APIs marked `@nogc nothrow`
-- ✅ **Cache Optimized**: 64-byte aligned hot data for L1 cache efficiency
-- ✅ **Thread-Safe Pooling**: Thread-local parser reuse
-- ✅ **Comprehensive API**: All HTTP methods, headers, versions supported
-- ✅ **Battle-Tested**: Built on Node.js's llhttp (billions of requests/day)
+## Overview
+
+Wire provides a `@nogc nothrow` HTTP/1.x parser with zero heap allocations. All string data is accessed via `StringView` slices into the original request buffer.
+
+**Key characteristics:**
+
+- Zero GC allocations during parsing
+- Complete `@nogc nothrow` API
+- 64-byte aligned structures for cache efficiency
+- Thread-local parser pool with automatic reuse
+
+## Installation
+
+Add to your `dub.json`:
+
+```json
+"dependencies": {
+    "wire": "~>1.0.0"
+}
+```
+
+Or with `dub.sdl`:
+
+```sdl
+dependency "wire" version="~>1.0.0"
+```
+
+### Building from Source
+
+```bash
+git clone https://github.com/federikowsky/Wire.git
+cd Wire
+make        # Build and run tests
+make lib    # Build static library only
+```
 
 ## Quick Start
 
@@ -21,38 +52,18 @@ import wire;
 void handleRequest(const(ubyte)[] data) @nogc nothrow {
     auto req = parseHTTP(data);
     
-    if (!req) {
-        // Handle parse error
-        return;
+    if (!req) return;  // Parse error
+    
+    auto method = req.getMethod();     // "GET"
+    auto path = req.getPath();         // "/api/users"
+    auto host = req.getHeader("Host"); // "example.com"
+    
+    auto page = req.getQueryParam("page");
+    
+    if (req.shouldKeepAlive()) {
+        // Reuse connection
     }
-    
-    // Zero-copy access to parsed data
-    auto method = req.getMethod();        // "GET"
-    auto path = req.getPath();            // "/api/users"
-    auto query = req.getQuery();          // "page=2&limit=10"
-    auto host = req.getHeader("Host");    // "example.com"
-    auto keepAlive = req.shouldKeepAlive(); // true/false
-    
-    // Parser automatically released on scope exit
 }
-```
-
-## Building
-
-### Requirements
-
-- **D Compiler**: LDC 1.35+ (recommended) or DMD 2.105+
-- **C Compiler**: clang or gcc
-- **llhttp**: v9.3.0 (included)
-
-### Build & Test
-
-```bash
-make          # Build and run tests
-make lib      # Build static library (libwire.a)
-make clean    # Clean build artifacts
-make debug    # Build with debug symbols
-make help     # Show all targets
 ```
 
 ## API Reference
@@ -60,151 +71,81 @@ make help     # Show all targets
 ### Parsing
 
 ```d
-auto parseHTTP(const(ubyte)[] data) @nogc nothrow
+auto parseHTTP(const(ubyte)[] data) @nogc nothrow;
 ```
 
-Returns a `ParserWrapper` with RAII cleanup. Parser automatically released when wrapper goes out of scope.
+Returns a `ParserWrapper` with RAII cleanup. The parser is automatically returned to the thread-local pool on scope exit.
 
 ### Request Methods
 
-```d
-StringView getMethod()              // HTTP method (GET, POST, etc.)
-StringView getPath()                // Request path
-StringView getQuery()               // Query string (if any)
-StringView getBody()                // Request body
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getMethod()` | `StringView` | HTTP method |
+| `getPath()` | `StringView` | Request path |
+| `getQuery()` | `StringView` | Query string (without `?`) |
+| `getHeader(name)` | `StringView` | Header value (case-insensitive) |
+| `getQueryParam(name)` | `StringView` | Query parameter value |
+| `getBody()` | `StringView` | Request body |
+| `shouldKeepAlive()` | `bool` | Connection keep-alive status |
+| `isUpgrade()` | `bool` | WebSocket upgrade request |
+| `getErrorCode()` | `int` | Error code (0 = success) |
 
-ubyte getVersionMajor()            // HTTP major version (1)
-ubyte getVersionMinor()            // HTTP minor version (0 or 1)
-StringView getVersion()            // Full version string ("1.1")
+All methods are `@nogc nothrow` and return zero-copy views.
 
-StringView getHeader(string name)  // Get header (case-insensitive)
-bool hasHeader(string name)        // Check header existence
-auto getHeaders()                  // Iterate all headers
-
-StringView getQueryParam(string name)  // Get query parameter value
-bool hasQueryParam(string name)        // Check query parameter existence
-
-bool shouldKeepAlive()             // Connection: keep-alive
-bool isUpgrade()                   // Connection: upgrade
-
-int getErrorCode()                 // Parse error code (0 = success)
-const(char)* getErrorReason()      // Error description
-```
-
-All methods are `@nogc nothrow` and return zero-copy `StringView` or primitives.
-
-### Query Parameter Example
+### Header Iteration
 
 ```d
-// URL: /search?q=hello&page=2&limit=10
-auto req = parseHTTP(data);
-
-if (req.hasQueryParam("q")) {
-    auto query = req.getQueryParam("q");  // "hello"
-    auto page = req.getQueryParam("page"); // "2"
+foreach (header; req.getHeaders()) {
+    writeln(header.name, ": ", header.value);
 }
 ```
 
 ## Performance
 
-### Zero-Allocation Design
+Benchmarked on Apple M2 with LDC 1.41:
 
-- **Parser Pool**: Thread-local, reused via `calloc` (C heap)
-- **StringView**: Zero-copy slice (pointer + length)
-- **Fixed Arrays**: Pre-allocated header storage (64 max)
-- **Cache-Aligned**: Hot data in first 64 bytes
+| Request Type | Size | Parse Time | Throughput |
+|--------------|------|------------|------------|
+| Simple GET | 37 B | 7 μs | 5 MB/s |
+| Browser (Chrome) | 1.0 KB | 1 μs | 983 MB/s |
+| REST API + JWT | 1.5 KB | 1 μs | 1,442 MB/s |
+| Stripe Webhook | 2.1 KB | 1 μs | 2,023 MB/s |
 
-### Memory Footprint
+**Memory usage:**
+- Per thread: ~1 KB (parser pool)
+- Per request: 0 bytes (zero allocation)
+- Header limit: 64 headers
 
-- **Per-thread overhead**: ~1 KB (parser + llhttp state)
-- **Per-request**: 0 bytes (zero allocations)
-- **Header limit**: 64 headers per request
+## Building
 
-## Testing
+### Requirements
 
-Comprehensive test suite with 45 tests covering happy paths, edge cases, error handling, and security scenarios:
+- **D Compiler**: LDC 1.35+ (recommended) or DMD 2.105+
+- **C Compiler**: clang or gcc (C99)
 
-```bash
-$ make test
+### Make Targets
 
-╔══════════════════════════════════════════════════════════╗
-║         Wire - Comprehensive Test Suite                 ║
-╚══════════════════════════════════════════════════════════╝
+| Target | Description |
+|--------|-------------|
+| `make` | Build and run tests |
+| `make lib` | Build `libwire.a` |
+| `make test-verbose` | Tests with timing |
+| `make debug` | Debug build |
+| `make clean` | Clean artifacts |
 
-Happy Path Tests
-================
-  Simple GET request                                 ... PASS
-  GET with path and query                            ... PASS
-  POST with body                                     ... PASS
-  PUT request                                        ... PASS
-  DELETE request                                     ... PASS
-  HEAD request                                       ... PASS
-  OPTIONS request                                    ... PASS
+## Documentation
 
-... (38 more tests)
-
-✓ All tests passed! (45/45)
-```
-
-## Architecture
-
-```
-source/wire/
-├── bindings.d    # C interface to llhttp
-├── types.d       # StringView, ParsedHttpRequest
-├── parser.d      # ParserPool, parseHTTP()
-├── package.d     # Public API exports
-└── c/
-    ├── llhttp.c  # Node.js llhttp implementation
-    ├── llhttp.h  # C header
-    ├── api.c     # llhttp API functions
-    └── http.c    # HTTP protocol parsing
-```
-
-## Thread Safety
-
-- ❌ **Not thread-safe**: Each thread must use separate parser
-- ✅ **Thread-local pooling**: Automatic via `ParserPool`
-- ✅ **No shared state**: Complete isolation
-
-## Error Handling
-
-```d
-auto req = parseHTTP(data);
-
-if (!req) {
-    // Parse failed
-    writeln("Error: ", req.getErrorCode());
-    writeln("Reason: ", req.getErrorReason());
-    return;
-}
-
-// Success - use req
-```
-
-Errors are returned via codes, no exceptions thrown.
+- [Technical Specifications](docs/specs.md) — Complete API reference
+- [llhttp](https://github.com/nodejs/llhttp) — Underlying parser
 
 ## Contributing
 
-Wire is a focused wrapper around llhttp. Contributions should:
+Contributions are welcome. Please ensure:
 
-1. Maintain `@nogc` compatibility
-2. Add tests for new features
-3. Follow D best practices
-4. Keep zero-allocation guarantee
+1. All code maintains `@nogc nothrow` compatibility
+2. Tests pass (`make test`)
+3. Code follows D style guidelines
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
-
-Built on [llhttp](https://github.com/nodejs/llhttp) (MIT License)
-
-## Acknowledgments
-
-- **llhttp**: Node.js HTTP parser by Fedor Indutny
-- **D Language**: Walter Bright, Andrei Alexandrescu, and community
-- **Inspiration**: High-performance parsing from Rust's httparse
-
----
-
-**Wire** - Zero-allocation HTTP parsing for D 🚀
+MIT License — see [LICENSE](LICENSE) for details.
