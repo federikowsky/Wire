@@ -241,3 +241,90 @@ align(64) struct ParsedHttpRequest {
         return HeaderRange(content.headers.ptr, routing.numHeaders); 
     }
 }
+
+// ============================================================================
+// HTTP Utility Functions
+// ============================================================================
+
+/**
+ * Checks if a character is Optional Whitespace (space or tab) according to RFC 7230.
+ *
+ * Params:
+ *   c = Character to check
+ * Returns:
+ *   true if the character is space or tab, false otherwise
+ */
+pragma(inline, true)
+public bool isWhitespace(char c) @nogc nothrow pure @safe
+{
+    return c == ' ' || c == '\t';
+}
+
+/**
+ * Removes Optional Whitespace from the beginning and end of a string, zero-copy.
+ *
+ * Params:
+ *   s = String slice to trim
+ * Returns:
+ *   Trimmed slice (zero-copy, no allocation)
+ */
+pragma(inline, true)
+public const(char)[] trimWhitespace(const(char)[] s) @nogc nothrow pure @safe
+{
+    size_t start = 0;
+    size_t end = s.length;
+    while (start < end && isWhitespace(s[start])) start++;
+    while (end > start && isWhitespace(s[end - 1])) end--;
+    return s[start .. end];
+}
+
+/**
+ * Finds the HTTP header terminator (`\r\n\r\n`) even if split across two buffers.
+ *
+ * This function handles the case where the terminator pattern spans the boundary
+ * between the existing buffer and the appended buffer.
+ *
+ * Params:
+ *   existing = Existing buffer data
+ *   append = Newly appended buffer data
+ * Returns:
+ *   Number of bytes from append buffer needed to complete the terminator (0 if not found)
+ */
+public size_t findHeaderEnd(const(ubyte)[] existing, const(ubyte)[] append) @nogc nothrow pure @safe
+{
+    if (append.length == 0)
+        return 0;
+
+    auto elen = existing.length;
+    auto start = (elen > 3) ? (elen - 3) : 0;
+
+    // Cross-boundary match (pattern starts in the last 3 bytes of existing).
+    for (size_t i = start; i < elen; ++i)
+    {
+        auto endPos = i + 4;
+        if (endPos <= elen) continue;
+        auto need = endPos - elen;
+        if (need > append.length) continue;
+
+        ubyte b0 = existing[i];
+        ubyte b1 = (i + 1 < elen) ? existing[i + 1] : append[i + 1 - elen];
+        ubyte b2 = (i + 2 < elen) ? existing[i + 2] : append[i + 2 - elen];
+        ubyte b3 = (i + 3 < elen) ? existing[i + 3] : append[i + 3 - elen];
+        if (b0 == '\r' && b1 == '\n' && b2 == '\r' && b3 == '\n')
+            return need;
+    }
+
+    // Match fully within append.
+    if (append.length >= 4)
+    {
+        immutable len = append.length - 3;
+        for (size_t i = 0; i < len; ++i)
+        {
+            if (append[i] != '\r') continue;
+            if (append[i + 1] == '\n' && append[i + 2] == '\r' && append[i + 3] == '\n')
+                return i + 4;
+        }
+    }
+
+    return 0;
+}

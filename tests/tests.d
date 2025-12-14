@@ -7,6 +7,7 @@ import core.time : MonoTime, Duration;
 import wire;
 import wire.parser;
 import wire.types;
+import http_util_test;
 
 // ============================================================================
 // Test Framework
@@ -783,6 +784,11 @@ void main(string[] args)
     testSection("Edge Case Tests (Robustness)");
     runTest("Truncated request mid-header", &testTruncatedRequest);
     runTest("Incomplete body (short Content-Length)", &testIncompleteBody);
+
+    testSection("HTTP Utility Functions");
+    runTest("isWhitespace - check optional whitespace", &testIsWhitespace);
+    runTest("trimWhitespace - trim optional whitespace", &testTrimWhitespace);
+    runTest("findHeaderEnd - cross-boundary detection", &testFindHeaderEnd);
 
     auto overallElapsed = MonoTime.currTime - overallStart;
 

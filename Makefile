@@ -20,15 +20,15 @@ LIB_OUT      := $(BUILD_DIR)/$(LIB_NAME)
 
 # Compiler Flags
 CFLAGS       := -O2 -fPIC -Wall
-DFLAGS       := -O2 -I$(SRC_DIR)
-DFLAGS_DEBUG := -g -I$(SRC_DIR)
+DFLAGS       := -O2 -I$(SRC_DIR) -I$(TEST_DIR)
+DFLAGS_DEBUG := -g -I$(SRC_DIR) -I$(TEST_DIR)
 DFLAGS_LIB   := $(DFLAGS) -lib
 
 # Source Files
 C_SOURCES    := $(wildcard $(LLHTTP_SRC)/*.c)
 C_OBJECTS    := $(patsubst $(LLHTTP_SRC)/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES))
 
-D_FILES      := $(wildcard $(D_SOURCES)/*.d)
+D_FILES      := $(wildcard $(D_SOURCES)/*.d) $(wildcard $(D_SOURCES)/*/*.d)
 
 # Test files (auto-discovered)
 TEST_SOURCES := $(wildcard $(TEST_DIR)/*.d)
@@ -111,7 +111,7 @@ test-debug: $(BUILD_DIR)/debug_tests
 # Pattern rule: build any test from tests/*.d
 $(BUILD_DIR)/%: $(TEST_DIR)/%.d $(C_OBJECTS) $(D_FILES) | $(BUILD_DIR)
 	@echo "[DC] Building $*..."
-	@$(DC) $(DFLAGS) $(D_FILES) $< $(C_OBJECTS) -of=$@ -od=$(BUILD_DIR)
+	@$(DC) $(DFLAGS) $(D_FILES) $< $(TEST_DIR)/http_util_test.d $(C_OBJECTS) -of=$@ -od=$(BUILD_DIR)
 	@echo "✓ Built: $@"
 
 # Build all tests
