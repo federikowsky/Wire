@@ -1,10 +1,10 @@
 # Wire - High-Performance HTTP Parser for D
 
-> **Version**: 1.0.3  
+> **Version**: 1.0.4  
 > **Status**: Production Ready  
 > **License**: MIT  
 > **Repository**: [github.com/federikowsky/Wire](https://github.com/federikowsky/Wire)  
-> **Last Updated**: 2025-12-14
+> **Last Updated**: 2025-12-15
 
 ---
 
