@@ -7,6 +7,7 @@ import core.time : MonoTime, Duration;
 import wire;
 import wire.parser;
 import wire.types;
+import wire.bindings : llhttp_errno;
 import http_util_test;
 
 // ============================================================================
@@ -694,6 +695,129 @@ void testIncompleteBody()
 }
 
 // ============================================================================
+// Owned Parser API Tests
+// ============================================================================
+
+void testOwnedParserTwoIndependent()
+{
+    // Test 1: Create two independent parsers and verify they don't interfere
+    ParserHandle p1 = createParser();
+    assert(p1 !is null, "Failed to create parser 1");
+
+    ParserHandle p2 = createParser();
+    assert(p2 !is null, "Failed to create parser 2");
+
+    // Parse different requests
+    auto data1 = cast(const(ubyte)[]) "GET /path-a HTTP/1.1\r\n\r\n";
+    auto data2 = cast(const(ubyte)[]) "GET /path-b HTTP/1.1\r\n\r\n";
+
+    auto err1 = parseHTTPWith(p1, data1);
+    auto err2 = parseHTTPWith(p2, data2);
+
+    assert(err1 == llhttp_errno.HPE_OK, "Parser 1 failed");
+    assert(err2 == llhttp_errno.HPE_OK, "Parser 2 failed");
+
+    // Verify correct paths (parsers don't interfere)
+    ref ParsedHttpRequest req1 = getRequest(p1);
+    ref ParsedHttpRequest req2 = getRequest(p2);
+
+    assert(req1.routing.path == "/path-a", "Parser 1 has wrong path");
+    assert(req2.routing.path == "/path-b", "Parser 2 has wrong path");
+
+    // Both should be GET
+    assert(req1.getMethod() == "GET");
+    assert(req2.getMethod() == "GET");
+
+    // Cleanup
+    destroyParser(p1);
+    destroyParser(p2);
+}
+
+void testOwnedParserReuse()
+{
+    // Test 2: Reuse same parser for multiple requests, verify reset works
+    ParserHandle p = createParser();
+    assert(p !is null, "Failed to create parser");
+
+    // First request: POST with 2 headers
+    auto data1 = cast(const(ubyte)[]) "POST /first HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 5\r\n\r\n{...}";
+    auto err1 = parseHTTPWith(p, data1);
+    assert(err1 == llhttp_errno.HPE_OK, "First parse failed");
+
+    ref ParsedHttpRequest req1 = getRequest(p);
+    assert(req1.getMethod() == "POST", "First request: wrong method");
+    assert(req1.getPath() == "/first", "First request: wrong path");
+    assert(req1.routing.numHeaders == 2, "First request: wrong header count");
+    assert(req1.content.body.length > 0, "First request: body should not be empty");
+
+    // Second request: GET with 1 header (verify reset clears previous state)
+    auto data2 = cast(const(ubyte)[]) "GET /second HTTP/1.1\r\nHost: example.com\r\n\r\n";
+    auto err2 = parseHTTPWith(p, data2);
+    assert(err2 == llhttp_errno.HPE_OK, "Second parse failed");
+
+    ref ParsedHttpRequest req2 = getRequest(p);
+    assert(req2.getMethod() == "GET", "Second request: wrong method");
+    assert(req2.getPath() == "/second", "Second request: wrong path");
+    assert(req2.routing.numHeaders == 1, "Second request: headers not reset (should be 1, not 3)");
+    assert(req2.content.body.length == 0, "Second request: body should be empty");
+    assert(req2.routing.flags == 0x01, "Second request: flags not reset correctly"); // Keep-Alive for HTTP/1.1
+
+    // Cleanup
+    destroyParser(p);
+}
+
+void testOwnedParserTLSStillWorks()
+{
+    // Test 3: Verify existing TLS API (parseHTTP) still works correctly
+    auto data = cast(const(ubyte)[]) "GET /tls-test HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    auto req = parseHTTP(data);
+
+    assert(req, "TLS parseHTTP failed");
+    assert(req.getMethod() == "GET", "TLS API: wrong method");
+    assert(req.getPath() == "/tls-test", "TLS API: wrong path");
+    assert(req.getHeader("Host") == "localhost", "TLS API: wrong header");
+}
+
+void testOwnedParserErrorHandling()
+{
+    // Test 4: Error handling with owned parser
+    ParserHandle p = createParser();
+    assert(p !is null, "Failed to create parser");
+
+    // Malformed request (invalid HTTP version)
+    auto data = cast(const(ubyte)[]) "GET / INVALID\r\n\r\n";
+    auto err = parseHTTPWith(p, data);
+
+    // Should get an error
+    assert(err != llhttp_errno.HPE_OK, "Should fail on malformed request");
+
+    ref ParsedHttpRequest req = getRequest(p);
+    assert(req.content.errorCode != 0, "Error code should be set");
+    assert(req.content.errorPos !is null, "Error position should be set");
+
+    // Cleanup
+    destroyParser(p);
+}
+
+void testOwnedParserCleanup()
+{
+    // Test 5: Cleanup tests
+    ParserHandle p = createParser();
+    assert(p !is null, "Failed to create parser");
+
+    // Parse a request
+    auto data = cast(const(ubyte)[]) "GET /cleanup HTTP/1.1\r\n\r\n";
+    auto err = parseHTTPWith(p, data);
+    assert(err == llhttp_errno.HPE_OK, "Parse failed");
+
+    // Destroy parser
+    destroyParser(p);
+
+    // Verify null safety (should not crash)
+    destroyParser(null);
+}
+
+// ============================================================================
 // Main Test Runner
 // ============================================================================
 
@@ -784,6 +908,13 @@ void main(string[] args)
     testSection("Edge Case Tests (Robustness)");
     runTest("Truncated request mid-header", &testTruncatedRequest);
     runTest("Incomplete body (short Content-Length)", &testIncompleteBody);
+
+    testSection("Owned Parser API (Per-Instance)");
+    runTest("Two independent parsers", &testOwnedParserTwoIndependent);
+    runTest("Parser reuse with reset", &testOwnedParserReuse);
+    runTest("TLS API still works", &testOwnedParserTLSStillWorks);
+    runTest("Error handling", &testOwnedParserErrorHandling);
+    runTest("Cleanup and null safety", &testOwnedParserCleanup);
 
     testSection("HTTP Utility Functions");
     runTest("isWhitespace - check optional whitespace", &testIsWhitespace);

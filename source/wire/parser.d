@@ -54,6 +54,48 @@ struct Parser {
     }
 }
 
+/**
+ * Safe setup that checks all allocations before dereferencing.
+ * Used only by createParser() to avoid crashes on allocation failure.
+ *
+ * Params:
+ *   self = Parser to initialize (must not be null)
+ *
+ * Returns: true on success, false on allocation failure
+ */
+private bool setupChecked(Parser* self) @nogc nothrow {
+    // Allocate handle - check before dereferencing
+    self.handle = cast(llhttp_t*) calloc(1, llhttp_t.sizeof);
+    if (self.handle is null) {
+        return false;
+    }
+
+    // Allocate settings - check before dereferencing
+    self.settings = cast(llhttp_settings_t*) calloc(1, llhttp_settings_t.sizeof);
+    if (self.settings is null) {
+        return false;
+    }
+
+    // Initialize settings with callbacks (same as setup())
+    self.settings.on_message_begin = &cb_on_message_begin;
+    self.settings.on_url = &cb_on_url;
+    self.settings.on_method = &cb_on_method;
+    self.settings.on_version = &cb_on_version;
+    self.settings.on_header_field = &cb_on_header_field;
+    self.settings.on_header_value = &cb_on_header_value;
+    self.settings.on_headers_complete = &cb_on_headers_complete;
+    self.settings.on_body = &cb_on_body;
+    self.settings.on_message_complete = &cb_on_message_complete;
+
+    // Initialize parser
+    llhttp_init(self.handle, llhttp_type.HTTP_REQUEST, self.settings);
+
+    // Set data pointer to Parser instance
+    self.handle.data = cast(void*) self;
+
+    return true;
+}
+
 // --- C Callbacks (Static, extern(C)) ---
 
 extern(C) int cb_on_message_begin(llhttp_t* p) @nogc nothrow {
@@ -230,14 +272,136 @@ struct ParserPool {
  */
 auto parseHTTP(const(ubyte)[] data) @nogc nothrow {
     Parser* p = ParserPool.acquire();
-    
+
     // Execute Parsing
     llhttp_errno err = llhttp_execute(p.handle, cast(const(char)*)data.ptr, data.length);
-    
+
     if (err != llhttp_errno.HPE_OK) {
         p.request.content.errorCode = cast(int)err;
         p.request.content.errorPos = llhttp_get_error_reason(p.handle);
     }
-    
+
     return ParserWrapper(p);
+}
+
+// ============================================================================
+// Owned Parser API - Per-instance parser for Aurora (fiber-safe)
+// ============================================================================
+
+/**
+ * Opaque handle to a dedicated parser instance.
+ * Use createParser() to create, destroyParser() to free.
+ *
+ * Lifetime: Create one parser per connection/fiber. Use parseHTTPWith() for each request.
+ * Call destroyParser() when done (e.g., connection close).
+ *
+ * Aurora usage pattern:
+ *   ParserHandle conn = createParser();
+ *   assert(conn !is null);
+ *
+ *   llhttp_errno err = parseHTTPWith(conn, requestData);
+ *   if (err == llhttp_errno.HPE_OK) {
+ *       ref ParsedHttpRequest req = getRequest(conn);
+ *       // Use req.routing.path, req.getHeader(), etc.
+ *   }
+ *
+ *   destroyParser(conn);
+ */
+alias ParserHandle = void*;
+
+/**
+ * Create a dedicated parser instance.
+ *
+ * Allocates a Parser on the heap with calloc and initializes it.
+ * The caller owns the parser and must call destroyParser() to free resources.
+ *
+ * Returns: Opaque parser handle, or null on allocation failure.
+ */
+ParserHandle createParser() @nogc nothrow {
+    // Allocate Parser struct
+    Parser* p = cast(Parser*) calloc(1, Parser.sizeof);
+    if (p is null) {
+        return null;
+    }
+
+    // Safe setup with allocation checks
+    if (!setupChecked(p)) {
+        // Cleanup partial allocations
+        if (p.handle) free(p.handle);
+        if (p.settings) free(p.settings);
+        free(p);
+        return null;
+    }
+
+    return cast(ParserHandle) p;
+}
+
+/**
+ * Destroy a parser created with createParser().
+ *
+ * Frees all C allocations (handle, settings) and the Parser itself.
+ * Safe to call with null handle.
+ *
+ * Params:
+ *   handle = Parser handle to destroy, or null
+ */
+void destroyParser(ParserHandle handle) @nogc nothrow {
+    if (handle is null) {
+        return;
+    }
+
+    Parser* p = cast(Parser*) handle;
+
+    if (p.handle) {
+        free(p.handle);
+    }
+    if (p.settings) {
+        free(p.settings);
+    }
+    free(p);
+}
+
+/**
+ * Parse HTTP request data using the given parser handle.
+ *
+ * Resets the parser state before parsing (clears previous request).
+ * Fills parser.request with parsed data (zero-copy StringView slices).
+ *
+ * Params:
+ *   handle = Parser handle (must not be null)
+ *   data = Raw HTTP request bytes
+ *
+ * Returns: llhttp_errno (0 = HPE_OK = success)
+ */
+llhttp_errno parseHTTPWith(ParserHandle handle, const(ubyte)[] data) @nogc nothrow {
+    Parser* p = cast(Parser*) handle;
+
+    // Reset for new request
+    p.reset(p);
+
+    // Execute parsing
+    llhttp_errno err = llhttp_execute(p.handle, cast(const(char)*)data.ptr, data.length);
+
+    if (err != llhttp_errno.HPE_OK) {
+        p.request.content.errorCode = cast(int)err;
+        p.request.content.errorPos = llhttp_get_error_reason(p.handle);
+    }
+
+    return err;
+}
+
+/**
+ * Get reference to the parsed request.
+ *
+ * Valid only while the input buffer passed to parseHTTPWith() remains valid.
+ * ParsedHttpRequest contains StringView slices pointing into that buffer.
+ *
+ * Params:
+ *   handle = Parser handle (must not be null)
+ *
+ * Returns: Reference to parsed request data
+ */
+ref ParsedHttpRequest getRequest(ParserHandle handle) @nogc nothrow {
+    Parser* p = cast(Parser*) handle;
+    return p.request;
 }

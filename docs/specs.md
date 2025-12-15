@@ -30,7 +30,9 @@ Wire is a zero-allocation, high-performance HTTP/1.1 parser for the D programmin
 1. **Zero Allocation**: No GC pressure during parsing
 2. **Cache Optimization**: Hot data in first 64 bytes (L1 cache line)
 3. **Zero-Copy**: `StringView` for all string data
-4. **Thread-Local Pooling**: Parser reuse without synchronization
+4. **Dual API Design**: 
+   - **TLS API** (`parseHTTP`): Thread-local pooling for sequential parsing
+   - **Owned API** (`createParser`): Per-instance parsers for fiber-safe, per-connection use
 5. **Battle-Tested**: llhttp handles billions of requests/day in Node.js
 
 ### Component Structure
@@ -166,6 +168,69 @@ auto method = req.getMethod();
 auto path = req.getPath();
 ```
 
+### Owned Parser API (Per-Instance)
+
+For use cases requiring dedicated parser instances (e.g., Aurora fibers, per-connection parsers), Wire provides an owned parser API that allocates a parser on the heap.
+
+**Functions**:
+```d
+@nogc nothrow
+{
+    ParserHandle createParser();                                    // Create dedicated parser
+    void destroyParser(ParserHandle handle);                        // Free parser
+    llhttp_errno parseHTTPWith(ParserHandle handle, const(ubyte)[] data);  // Parse with owned parser
+    ref ParsedHttpRequest getRequest(ParserHandle handle);          // Get parsed request
+}
+```
+
+**Type**:
+```d
+alias ParserHandle = void*;  // Opaque handle to parser instance
+```
+
+**Usage Pattern** (Aurora/fiber-safe):
+```d
+// Create parser per connection/fiber
+ParserHandle conn = createParser();
+assert(conn !is null, "Failed to allocate parser");
+
+// Parse requests
+llhttp_errno err = parseHTTPWith(conn, requestData);
+if (err == llhttp_errno.HPE_OK) {
+    ref ParsedHttpRequest req = getRequest(conn);
+    // Use req.routing.path, req.getHeader(), etc.
+    // StringView slices point into requestData buffer
+} else {
+    // Handle parse error
+    ref ParsedHttpRequest req = getRequest(conn);
+    writeln("Error: ", req.getErrorCode());
+}
+
+// Cleanup when connection closes
+destroyParser(conn);
+```
+
+**Key Differences from TLS API**:
+
+| Feature | TLS API (`parseHTTP`) | Owned API (`createParser`) |
+|---------|----------------------|---------------------------|
+| **Allocation** | Thread-local pool (shared) | Per-instance heap allocation |
+| **Lifetime** | RAII (automatic) | Manual (`destroyParser`) |
+| **Use Case** | Single-threaded, sequential parsing | Per-connection, fiber-safe |
+| **Memory** | ~1 KB per thread | ~1 KB per parser instance |
+| **Thread Safety** | Thread-local (safe) | Per-instance (fiber-safe) |
+
+**When to Use Owned API**:
+- ✅ Per-connection parsers (one parser per TCP connection)
+- ✅ Aurora fiber-based servers (fiber-safe, no TLS dependencies)
+- ✅ Long-lived connections with multiple requests
+- ✅ When you need explicit control over parser lifetime
+
+**When to Use TLS API**:
+- ✅ Single-threaded request handling
+- ✅ Sequential request processing
+- ✅ Default choice for most applications
+
 ### Request Line Methods
 
 ```d
@@ -254,6 +319,42 @@ foreach (header; req.getHeaders()) {
 - `10` = Invalid header token
 - `11` = Invalid Content-Length
 - `24` = Header overflow (>64 headers)
+
+### HTTP Utility Functions
+
+Wire provides utility functions for HTTP header normalization and buffer operations:
+
+```d
+@nogc nothrow pure @safe
+{
+    bool isWhitespace(char c);                                    // Check if char is space or tab (OWS)
+    const(char)[] trimWhitespace(const(char)[] s);                // Trim OWS (zero-copy)
+    size_t findHeaderEnd(const(ubyte)[] existing, const(ubyte)[] append);  // Find \r\n\r\n across buffers
+}
+```
+
+**Functions**:
+
+- **`isWhitespace(char c)`**: Checks if a character is Optional Whitespace (space or tab) according to RFC 7230.
+- **`trimWhitespace(const(char)[] s)`**: Removes Optional Whitespace from the beginning and end of a string (zero-copy, returns slice).
+- **`findHeaderEnd(const(ubyte)[] existing, const(ubyte)[] append)`**: Finds the HTTP header terminator (`\r\n\r\n`) even if split across two buffers. Returns number of bytes from append buffer needed to complete the terminator (0 if not found).
+
+**Example**:
+```d
+import wire.types;
+
+// Check whitespace
+if (isWhitespace(' ')) { /* true */ }
+if (isWhitespace('\t')) { /* true */ }
+
+// Trim header value
+auto value = trimWhitespace("  Content-Type  ");  // "Content-Type" (zero-copy)
+
+// Find header end across buffer boundary
+const(ubyte)[] existing = cast(ubyte[])"GET / HTTP/1.1\r\nHost: example.com\r\n";
+const(ubyte)[] append = cast(ubyte[])"\r\nbody";
+size_t bytesNeeded = findHeaderEnd(existing, append);  // Returns 2 (bytes from append)
+```
 
 ---
 
@@ -359,7 +460,7 @@ void handleRequest(const(ubyte)[] data) @nogc nothrow {
 
 ### Test Coverage
 
-**Standard Tests** (45 tests):
+**Standard Tests** (50 tests):
 - ✅ HTTP methods (GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH, TRACE, CONNECT)
 - ✅ Query strings (parsing, getQueryParam, flags, URL encoding)
 - ✅ Headers (multiple, case-insensitive, empty values, iteration, overflow)
@@ -368,6 +469,8 @@ void handleRequest(const(ubyte)[] data) @nogc nothrow {
 - ✅ Error handling (invalid version, malformed requests, invalid headers)
 - ✅ Security (multiple same-name headers, special characters, URL encoding)
 - ✅ Real-world scenarios (browser, API, chunked encoding)
+- ✅ Owned Parser API (per-instance parsers, reuse, error handling, cleanup)
+- ✅ HTTP Utility Functions (isWhitespace, trimWhitespace, findHeaderEnd)
 
 **Debug Tests** (7 complex scenarios):
 - Simple GET (baseline)
@@ -438,7 +541,7 @@ make test-debug
 
 **Allocation Points** (all C heap, not GC):
 
-1. **Parser Pool** (once per thread):
+1. **Parser Pool** (TLS API - once per thread):
    ```d
    t_parser = cast(Parser*) calloc(1, Parser.sizeof);
    ```
@@ -449,15 +552,28 @@ make test-debug
    settings = cast(llhttp_settings_t*) calloc(1, llhttp_settings_t.sizeof);
    ```
 
-3. **During Parsing**: **Zero allocations** ✓
+3. **Owned Parser** (Owned API - per-instance):
+   ```d
+   Parser* p = cast(Parser*) calloc(1, Parser.sizeof);
+   // Plus handle and settings (same as above)
+   // Freed via destroyParser()
+   ```
+
+4. **During Parsing**: **Zero allocations** ✓
 
 ### Thread Safety
 
+**TLS API** (`parseHTTP`):
 - ❌ **Not thread-safe**: Each thread must use separate parser
 - ✅ **Thread-local pooling**: Automatic via `ParserPool`
 - ✅ **No shared state**: Complete isolation between threads
 
-**Thread-Local Model**:
+**Owned API** (`createParser`):
+- ✅ **Fiber-safe**: Each parser instance is independent
+- ✅ **Per-connection**: One parser per connection/fiber
+- ✅ **No TLS dependencies**: Suitable for Aurora fibers
+
+**Thread-Local Model** (TLS API):
 ```d
 static Parser* t_parser;  // TLS variable
 static bool t_busy;        // TLS flag
@@ -466,6 +582,14 @@ static bool t_busy;        // TLS flag
 auto wrapper = parseHTTP(data);  // Gets t_parser
 
 // Automatically released on scope exit
+```
+
+**Per-Instance Model** (Owned API):
+```d
+// Each connection/fiber gets its own parser
+ParserHandle conn = createParser();  // Independent instance
+parseHTTPWith(conn, data);
+destroyParser(conn);  // Explicit cleanup
 ```
 
 ### Safety Attributes
