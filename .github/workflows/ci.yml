@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - ci/**
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl xz-utils ca-certificates
+
+      - name: Install LDC
+        run: |
+          curl -fsSL https://github.com/ldc-developers/ldc/releases/download/v1.41.0/ldc2-1.41.0-linux-x86_64.tar.xz -o /tmp/ldc.tar.xz
+          mkdir -p /tmp/ldc
+          tar -xf /tmp/ldc.tar.xz -C /tmp/ldc --strip-components=1
+          echo "/tmp/ldc/bin" >> "$GITHUB_PATH"
+          /tmp/ldc/bin/ldc2 --version
+
+      - name: Build and run tests
+        run: make test
+
+      - name: Verbose test run
+        run: make test-verbose
