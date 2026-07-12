@@ -5,34 +5,58 @@ env:
 
 on:
   push:
-    branches:
-      - main
-      - ci/**
+    branches: [main, "codex/**"]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build-test:
-    runs-on: ubuntu-latest
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DUB_HOME: ${{ github.workspace }}/.ci-home
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
-      - name: Install build dependencies
+      - uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.42.0
+          dub: 1.41.0
+
+      - name: Capture toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential curl xz-utils ca-certificates
+          set -o pipefail
+          mkdir -p artifacts/ci
+          ldc2 --version 2>&1 | tee artifacts/ci/ldc.txt
+          dub --version 2>&1 | tee artifacts/ci/dub.txt
+          cc --version 2>&1 | tee artifacts/ci/cc.txt
+          uname -a | tee artifacts/ci/uname.txt
 
-      - name: Install LDC
+      - name: Build libraries
         run: |
-          curl -fsSL https://github.com/ldc-developers/ldc/releases/download/v1.41.0/ldc2-1.41.0-linux-x86_64.tar.xz -o /tmp/ldc.tar.xz
-          mkdir -p /tmp/ldc
-          tar -xf /tmp/ldc.tar.xz -C /tmp/ldc --strip-components=1
-          echo "/tmp/ldc/bin" >> "$GITHUB_PATH"
-          /tmp/ldc/bin/ldc2 --version
+          set -o pipefail
+          HOME="$DUB_HOME" dub build --compiler=ldc2 2>&1 | tee artifacts/ci/build-debug.log
+          HOME="$DUB_HOME" dub build --compiler=ldc2 --build=release 2>&1 | tee artifacts/ci/build-release.log
 
-      - name: Build and run tests
-        run: make test
+      - name: Run repository tests
+        run: |
+          set -o pipefail
+          make test 2>&1 | tee artifacts/ci/repository-tests.log
 
-      - name: Verbose test run
-        run: make test-verbose
+      - name: Link and run downstream consumer
+        run: |
+          set -o pipefail
+          HOME="$DUB_HOME" dub run --root=tests/link-smoke --compiler=ldc2 --build=release 2>&1 | tee artifacts/ci/link-smoke.log
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wire-linux-${{ github.sha }}
+          path: artifacts/ci
+          if-no-files-found: error
