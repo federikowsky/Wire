@@ -23,10 +23,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Capture runner context
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/ci
+          uname -a | tee artifacts/ci/uname.txt
+          lscpu | tee artifacts/ci/lscpu.txt
+          free -h | tee artifacts/ci/memory.txt
+
       - uses: dlang-community/setup-dlang@v2
         with:
           compiler: ldc-1.42.0
-          dub: 1.41.0
 
       - name: Capture toolchain
         run: |
@@ -35,7 +42,6 @@ jobs:
           ldc2 --version 2>&1 | tee artifacts/ci/ldc.txt
           dub --version 2>&1 | tee artifacts/ci/dub.txt
           cc --version 2>&1 | tee artifacts/ci/cc.txt
-          uname -a | tee artifacts/ci/uname.txt
 
       - name: Build libraries
         run: |
