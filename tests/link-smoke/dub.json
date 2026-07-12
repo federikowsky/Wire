@@ -1,0 +1,14 @@
+{
+    "name": "wire-link-smoke",
+    "description": "Executable consumer proving Wire native symbols propagate through DUB",
+    "authors": ["Federico Filippi"],
+    "license": "MIT",
+    "targetType": "executable",
+    "dependencies": {
+        "wire": {
+            "path": "../.."
+        }
+    },
+    "sourcePaths": ["source"],
+    "mainSourceFile": "source/app.d"
+}
