@@ -818,6 +818,145 @@ void testOwnedParserCleanup()
 }
 
 // ============================================================================
+// Parser Wrapper Lifetime Tests
+// ============================================================================
+
+private enum firstRequest = "POST /first?owner=first HTTP/1.1\r\nHost: alpha\r\nX-Owner: first\r\nContent-Length: 3\r\n\r\nONE";
+private enum secondRequest = "PUT /second?owner=second HTTP/1.0\r\nHost: bravo\r\nX-Owner: second\r\nContent-Length: 3\r\n\r\nTWO";
+private enum thirdRequest = "GET /third HTTP/1.1\r\nHost: charlie\r\n\r\n";
+
+private void checkFirst(ref ParserWrapper req)
+{
+    // enforce remains active when the suite is built with -release.
+    enforce(req.getMethod() == "POST", "Live wrapper's method was overwritten");
+    enforce(req.getPath() == "/first", "Live wrapper's path was overwritten");
+    enforce(req.getQuery() == "owner=first", "Live wrapper's query was overwritten");
+    enforce(req.getHeader("X-Owner") == "first", "Live wrapper's headers were overwritten");
+    enforce(req.getBody() == "ONE", "Live wrapper's body was overwritten");
+    enforce(req.getVersionMinor() == 1 && req.shouldKeepAlive(), "Live wrapper's flags were overwritten");
+    enforce(req.routing.messageComplete && req.getErrorCode() == 0, "Live wrapper's status was overwritten");
+}
+
+void testOverlappingWrappers()
+{
+    auto first = parseHTTP(cast(const(ubyte)[]) firstRequest);
+    ref ParsedHttpRequest retained = first.request();
+    checkFirst(first);
+    {
+        auto second = parseHTTP(cast(const(ubyte)[]) secondRequest);
+        auto third = parseHTTP(cast(const(ubyte)[]) thirdRequest);
+        checkFirst(first);
+        enforce(retained.getHeader("X-Owner") == "first", "An outstanding request reference was overwritten");
+        enforce(second.getPath() == "/second" && second.getBody() == "TWO", "Second live wrapper was overwritten");
+        enforce(third.getPath() == "/third", "Third request was not parsed");
+    }
+    checkFirst(first);
+}
+
+void testWrapperReleaseOutOfOrder()
+{
+    auto first = parseHTTP(cast(const(ubyte)[]) firstRequest);
+    auto second = parseHTTP(cast(const(ubyte)[]) secondRequest);
+    destroy(first);
+    auto third = parseHTTP(cast(const(ubyte)[]) thirdRequest);
+    enforce(second.getPath() == "/second" && second.getBody() == "TWO", "Release allowed a live parser to be reused");
+    destroy(second);
+    auto fourth = parseHTTP(cast(const(ubyte)[]) firstRequest);
+    enforce(third.getPath() == "/third", "Non-LIFO release invalidated a live wrapper");
+    checkFirst(fourth);
+}
+
+void testWrapperMoveAndReplacement()
+{
+    import std.algorithm.mutation : move;
+    auto first = parseHTTP(cast(const(ubyte)[]) firstRequest);
+    auto moved = move(first);
+    enforce(!first, "A moved-from wrapper still owns the parser");
+    destroy(first);
+    auto second = parseHTTP(cast(const(ubyte)[]) secondRequest);
+    checkFirst(moved);
+    second = parseHTTP(cast(const(ubyte)[]) thirdRequest);
+    checkFirst(moved);
+    enforce(second.getPath() == "/third", "Assignment did not replace the old lease");
+    moved = move(second);
+    enforce(!second, "Move assignment retained duplicate ownership");
+    destroy(second);
+    auto other = parseHTTP(cast(const(ubyte)[]) firstRequest);
+    enforce(moved.getPath() == "/third", "Moved lease was prematurely released");
+    checkFirst(other);
+}
+
+void testWrapperThreadHandoff()
+{
+    import core.thread : Thread;
+    import std.algorithm.mutation : move;
+    auto first = parseHTTP(cast(const(ubyte)[]) firstRequest);
+    // join serializes access: ownership changes threads, it is never shared.
+    auto consumer = new Thread({
+        auto moved = move(first);
+        checkFirst(moved);
+    });
+    consumer.start();
+    consumer.join();
+    // The consumer's idle cache has been destroyed on thread exit. The source
+    // thread must not retain a pointer to that now-freed parser.
+    auto next = parseHTTP(cast(const(ubyte)[]) thirdRequest);
+    enforce(next.getPath() == "/third", "Origin thread retained a released lease");
+}
+
+void testWrapperOutlivesOriginThread()
+{
+    import core.thread : Thread;
+    import std.algorithm.mutation : move;
+    ParserWrapper transferred;
+    auto producer = new Thread({
+        auto first = parseHTTP(cast(const(ubyte)[]) firstRequest);
+        transferred = move(first);
+    });
+    producer.start();
+    producer.join();
+    checkFirst(transferred);
+    {
+        auto other = parseHTTP(cast(const(ubyte)[]) secondRequest);
+        checkFirst(transferred);
+    }
+    // The receiver now has an idle parser. Releasing the transferred lease
+    // must free only that lease and preserve the receiver's cache.
+    destroy(transferred);
+    auto next = parseHTTP(cast(const(ubyte)[]) thirdRequest);
+    enforce(next.getPath() == "/third", "Transferred lease damaged the receiver's idle cache");
+}
+
+void testWrapperIncompleteIsolation()
+{
+    auto incomplete = parseHTTP(cast(const(ubyte)[]) "POST /partial HTTP/1.1\r\nContent-Length: 8\r\n\r\nshort");
+    enforce(!incomplete.routing.messageComplete, "Incomplete request unexpectedly completed");
+    auto other = parseHTTP(cast(const(ubyte)[]) firstRequest);
+    enforce(!incomplete.routing.messageComplete, "Another request changed the completion flag");
+    enforce(incomplete.getPath() == "/partial" && incomplete.getBody() == "short", "Incomplete result was overwritten");
+}
+
+void testWrapperErrorIsolation()
+{
+    auto first = parseHTTP(cast(const(ubyte)[]) firstRequest);
+    auto malformed = parseHTTP(cast(const(ubyte)[]) "GET / INVALID\r\n\r\n");
+    enforce(!malformed && malformed.getErrorCode() != 0, "Malformed request should report a parse error");
+    checkFirst(first);
+    auto next = parseHTTP(cast(const(ubyte)[]) thirdRequest);
+    enforce(!malformed && malformed.getErrorCode() != 0, "Live error result was overwritten");
+    checkFirst(first);
+}
+
+// Public operations retain their no-GC, no-throw signatures and move-only API.
+private void wrapperAttributes() @nogc nothrow
+{
+    auto req = parseHTTP(cast(const(ubyte)[]) firstRequest);
+    bool valid = cast(bool) req;
+    auto path = req.getPath();
+    static assert(!__traits(compiles, { auto copy = req; }));
+}
+
+// ============================================================================
 // Main Test Runner
 // ============================================================================
 
@@ -915,6 +1054,15 @@ void main(string[] args)
     runTest("TLS API still works", &testOwnedParserTLSStillWorks);
     runTest("Error handling", &testOwnedParserErrorHandling);
     runTest("Cleanup and null safety", &testOwnedParserCleanup);
+
+    testSection("Parser Wrapper Lifetimes");
+    runTest("Three overlapping request wrappers", &testOverlappingWrappers);
+    runTest("Non-LIFO release and reacquisition", &testWrapperReleaseOutOfOrder);
+    runTest("Wrapper moves and assignment replacement", &testWrapperMoveAndReplacement);
+    runTest("Wrapper released on another thread", &testWrapperThreadHandoff);
+    runTest("Wrapper outlives its origin thread", &testWrapperOutlivesOriginThread);
+    runTest("Incomplete request remains independent", &testWrapperIncompleteIsolation);
+    runTest("Parse errors preserve other live wrappers", &testWrapperErrorIsolation);
 
     testSection("HTTP Utility Functions");
     runTest("isWhitespace - check optional whitespace", &testIsWhitespace);

@@ -1,6 +1,6 @@
 # Wire
 
-High-performance, zero-allocation HTTP parser for D.
+High-performance, zero-GC-allocation HTTP parser for D.
 
 Built on [llhttp](https://github.com/nodejs/llhttp), the HTTP parser that powers Node.js.
 
@@ -10,7 +10,7 @@ Built on [llhttp](https://github.com/nodejs/llhttp), the HTTP parser that powers
 
 ## Overview
 
-Wire provides a `@nogc nothrow` HTTP/1.x parser with zero heap allocations. All string data is accessed via `StringView` slices into the original request buffer.
+Wire provides a `@nogc nothrow` HTTP/1.x parser. All string data is accessed via `StringView` slices into the original request buffer. Parser creation uses native heap allocations; sequential calls reuse a cached parser.
 
 **Key characteristics:**
 
@@ -74,7 +74,11 @@ void handleRequest(const(ubyte)[] data) @nogc nothrow {
 auto parseHTTP(const(ubyte)[] data) @nogc nothrow;
 ```
 
-Returns a `ParserWrapper` with RAII cleanup. The parser is automatically returned to the thread-local pool on scope exit.
+Returns a move-only `ParserWrapper` that exclusively owns its parser until scope exit. Multiple live wrappers, including nested or interleaved fiber requests, retain independent results. Assignment and moves transfer ownership; references returned by `request()` remain valid only while the receiving wrapper owns the parser.
+
+Each thread caches at most one **idle** parser. Acquisition removes it from the cache; cold or overlapping calls allocate a separate parser using the native heap. Release caches the parser on the releasing thread if its idle slot is empty, otherwise frees it. Thread exit frees only the idle parser, so a live wrapper can outlive its originating thread when ownership is transferred with synchronization. Concurrent access to the same wrapper is not supported.
+
+The input buffer remains borrowed: keep it alive and unchanged for as long as any request view is used. Native allocation failure raises `OutOfMemoryError`; parse errors still return a wrapper whose boolean conversion is false and whose error details can be inspected.
 
 ### Request Methods
 
@@ -112,8 +116,9 @@ Benchmarked on Apple M2 with LDC 1.41:
 | Stripe Webhook | 2.1 KB | 1 μs | 2,023 MB/s |
 
 **Memory usage:**
-- Per thread: ~1 KB (parser pool)
-- Per request: 0 bytes (zero allocation)
+- Per thread: at most one cached idle parser, freed on thread exit
+- Per live wrapper: one exclusive parser; cold/overlapping calls allocate the parser, llhttp handle and settings on the native heap
+- Sequential reuse: no new native allocations; parsing uses no GC allocations
 - Header limit: 64 headers
 
 ## Building
