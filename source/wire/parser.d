@@ -2,6 +2,7 @@ module wire.parser;
 
 import wire.bindings;
 import wire.types;
+import core.exception : onOutOfMemoryError;
 import core.stdc.stdlib : calloc, free;
 
 /**
@@ -16,34 +17,6 @@ struct Parser {
     // Internal state for header parsing
     StringView currentHeaderName;
     
-    // Initialize C structures (One-time setup)
-    // Takes a Parser* to set as the data pointer
-    void setup(Parser* self) @nogc nothrow {
-        // Allocate C structs on heap (stable addresses) and ZERO them
-        handle = cast(llhttp_t*) calloc(1, llhttp_t.sizeof); 
-        settings = cast(llhttp_settings_t*) calloc(1, llhttp_settings_t.sizeof); 
-        
-        // CRITICAL: Set the data pointer to the ALLOCATED Parser instance
-        handle.data = cast(void*)self;
-        
-        // Initialize settings with callbacks
-        settings.on_message_begin = &cb_on_message_begin;
-        settings.on_url = &cb_on_url;
-        settings.on_method = &cb_on_method;
-        settings.on_version = &cb_on_version;
-        settings.on_header_field = &cb_on_header_field;
-        settings.on_header_value = &cb_on_header_value;
-        settings.on_headers_complete = &cb_on_headers_complete;
-        settings.on_body = &cb_on_body;
-        settings.on_message_complete = &cb_on_message_complete;
-        
-        // Initialize parser
-        llhttp_init(handle, llhttp_type.HTTP_REQUEST, settings);
-        
-        // Re-set data after init (in case llhttp_init clears it)
-        handle.data = cast(void*)self;
-    }
-    
     // Reset for new request
     void reset(Parser* self) @nogc nothrow {
         llhttp_reset(handle);
@@ -56,7 +29,7 @@ struct Parser {
 
 /**
  * Safe setup that checks all allocations before dereferencing.
- * Used only by createParser() to avoid crashes on allocation failure.
+ * Used by createParser() for both cached and explicitly owned parsers.
  *
  * Params:
  *   self = Parser to initialize (must not be null)
@@ -76,7 +49,7 @@ private bool setupChecked(Parser* self) @nogc nothrow {
         return false;
     }
 
-    // Initialize settings with callbacks (same as setup())
+    // Initialize settings with callbacks
     self.settings.on_message_begin = &cb_on_message_begin;
     self.settings.on_url = &cb_on_url;
     self.settings.on_method = &cb_on_method;
@@ -196,8 +169,9 @@ extern(C) int cb_on_message_complete(llhttp_t* p) @nogc nothrow {
 }
 
 /**
- * RAII Wrapper for the Parser.
- * Returns the parser to the pool when it goes out of scope.
+ * Exclusive RAII lease for a Parser.
+ * Other parseHTTP calls cannot reuse this parser until the wrapper is released.
+ * Request views still borrow the input buffer, which must outlive their use.
  */
 struct ParserWrapper {
     Parser* parser;
@@ -213,7 +187,7 @@ struct ParserWrapper {
         }
     }
     
-    // Accessor for the request
+    // The reference is valid only while this wrapper owns its parser.
     ref ParsedHttpRequest request() return @nogc nothrow {
         return parser.request;
     }
@@ -228,47 +202,48 @@ struct ParserWrapper {
 }
 
 /**
- * Thread-Local Parser Pool.
- * Each thread gets exactly one parser instance lazily initialized.
+ * Thread-local cache containing at most one idle parser.
+ * A leased parser is detached from the cache, so overlapping requests remain
+ * independent and a lease can move to another thread with synchronized ownership.
  */
 struct ParserPool {
-    // Thread-Local State
+    // Thread-local idle slot; never points to a parser held by a live wrapper.
     static Parser* t_parser;
-    static bool t_busy;
     
-    // Acquire the thread's parser
+    // Reuse an idle parser or allocate an independent lease.
     static Parser* acquire() @nogc nothrow {
-        // If parser exists but is busy, it means we're re-parsing
-        // (e.g., incremental parsing in a loop where assignment
-        // happens before old destructor runs). This is safe because
-        // it's the same thread-local parser being reused.
         if (t_parser !is null) {
-            t_busy = true;
-            // Pass the actual pointer to reset
-            t_parser.reset(t_parser);
-            return t_parser;
+            auto p = t_parser;
+            t_parser = null;
+            p.reset(p);
+            return p;
         }
-        
-        // Lazy Initialization: Use calloc to ZERO the memory
-        t_parser = cast(Parser*) calloc(1, Parser.sizeof);
-        // Pass the actual allocated pointer to setup
-        t_parser.setup(t_parser);
-        
-        t_busy = true;
-        return t_parser;
+
+        auto p = cast(Parser*) createParser();
+        if (p is null) onOutOfMemoryError();
+        return p;
     }
     
-    // Release the parser
+    // Cache on the releasing thread, or free if its idle slot is occupied.
     static void release(Parser* p) @nogc nothrow {
-        if (p == t_parser) {
-            t_busy = false;
-        }
+        if (t_parser is null) t_parser = p;
+        else destroyParser(p);
     }
+}
+
+// D runs this for each thread. Active leases are not in the idle slot and may
+// safely outlive the thread on which they were acquired.
+static ~this() @nogc nothrow {
+    auto p = ParserPool.t_parser;
+    ParserPool.t_parser = null;
+    destroyParser(p);
 }
 
 /**
  * Main Entry Point.
- * Parses HTTP data and returns a RAII handle.
+ * Parses HTTP data and returns an exclusive RAII handle.
+ * Cold/overlapping calls may allocate on the C heap; no GC allocation is used.
+ * Allocation failure raises OutOfMemoryError rather than returning a null handle.
  */
 auto parseHTTP(const(ubyte)[] data) @nogc nothrow {
     Parser* p = ParserPool.acquire();

@@ -1,23 +1,23 @@
 # Wire - High-Performance HTTP Parser for D
 
-> **Version**: 1.0.4  
-> **Status**: Production Ready  
-> **License**: MIT  
-> **Repository**: [github.com/federikowsky/Wire](https://github.com/federikowsky/Wire)  
-> **Last Updated**: 2025-12-15
+> **Version**: 1.0.5
+> **Status**: Production Ready
+> **License**: MIT
+> **Repository**: [github.com/federikowsky/Wire](https://github.com/federikowsky/Wire)
+> **Last Updated**: 2026-10-25
 
 ---
 
 ## Executive Summary
 
-Wire is a zero-allocation, high-performance HTTP/1.1 parser for the D programming language. Built as a wrapper around the battle-tested [llhttp](https://github.com/nodejs/llhttp) C library (used by Node.js), Wire achieves **1-7 microsecond** parsing times with throughput exceeding **2 GB/sec** while maintaining complete `@nogc` compatibility.
+Wire is a zero-GC-allocation, high-performance HTTP/1.1 parser for the D programming language. Built as a wrapper around the battle-tested [llhttp](https://github.com/nodejs/llhttp) C library (used by Node.js), Wire achieves **1-7 microsecond** parsing times with throughput exceeding **2 GB/sec** while maintaining complete `@nogc` compatibility.
 
 ### Key Metrics
 
 - **Parse Time**: 1-7 μs per request (typical)
 - **Throughput**: 300-2,000 MB/sec depending on complexity
-- **Memory**: ~1 KB per thread (thread-local pool)
-- **Allocations**: Zero (complete `@nogc` implementation)
+- **Memory**: One parser per live wrapper, plus at most one idle parser per thread
+- **Allocations**: No GC allocations; native allocations when creating a parser
 - **Header Limit**: 64 headers per request
 - **Supported Methods**: GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH, etc.
 
@@ -27,11 +27,11 @@ Wire is a zero-allocation, high-performance HTTP/1.1 parser for the D programmin
 
 ### Design Principles
 
-1. **Zero Allocation**: No GC pressure during parsing
+1. **Zero GC Allocation**: No GC pressure during parsing
 2. **Cache Optimization**: Hot data in first 64 bytes (L1 cache line)
 3. **Zero-Copy**: `StringView` for all string data
 4. **Dual API Design**: 
-   - **TLS API** (`parseHTTP`): Thread-local pooling for sequential parsing
+   - **TLS API** (`parseHTTP`): Exclusive request leases with a thread-local idle cache
    - **Owned API** (`createParser`): Per-instance parsers for fiber-safe, per-connection use
 5. **Battle-Tested**: llhttp handles billions of requests/day in Node.js
 
@@ -152,7 +152,9 @@ align(64) struct ParsedHttpRequest {
 auto parseHTTP(const(ubyte)[] data);
 ```
 
-Returns a `ParserWrapper` with RAII cleanup. Parser is automatically released when wrapper goes out of scope.
+Returns a move-only `ParserWrapper` with RAII cleanup. Each live wrapper exclusively owns its parser; later calls do not overwrite its result. The parser is cached or freed when the wrapper goes out of scope. Native allocation failure raises `OutOfMemoryError`; a parse error returns a non-null wrapper with error details.
+
+The request reference is valid only while its wrapper owns the parser. `StringView` values borrow the input buffer, which must remain alive and unchanged during use. Moving a wrapper transfers parser ownership, not buffer ownership.
 
 **Example**:
 ```d
@@ -214,11 +216,11 @@ destroyParser(conn);
 
 | Feature | TLS API (`parseHTTP`) | Owned API (`createParser`) |
 |---------|----------------------|---------------------------|
-| **Allocation** | Thread-local pool (shared) | Per-instance heap allocation |
+| **Allocation** | Native allocation when no idle parser is available | Per-instance native allocation |
 | **Lifetime** | RAII (automatic) | Manual (`destroyParser`) |
-| **Use Case** | Single-threaded, sequential parsing | Per-connection, fiber-safe |
-| **Memory** | ~1 KB per thread | ~1 KB per parser instance |
-| **Thread Safety** | Thread-local (safe) | Per-instance (fiber-safe) |
+| **Use Case** | Independent RAII requests, including overlapping fibers | Explicit per-connection reuse |
+| **Memory** | One parser per live wrapper plus at most one idle parser per thread | One parser per handle |
+| **Thread Safety** | Exclusive ownership; synchronize transfer between threads | Exclusive ownership; synchronize transfer between threads |
 
 **When to Use Owned API**:
 - ✅ Per-connection parsers (one parser per TCP connection)
@@ -229,6 +231,7 @@ destroyParser(conn);
 **When to Use TLS API**:
 - ✅ Single-threaded request handling
 - ✅ Sequential request processing
+- ✅ Overlapping request lifetimes, including interleaved fibers
 - ✅ Default choice for most applications
 
 ### Request Line Methods
@@ -376,15 +379,11 @@ All benchmarks run on: **LDC 1.41, macOS ARM64, M2 chip**
 
 ### Memory Profile
 
-**Per-Thread Overhead**:
-- Parser struct: ~200 bytes
-- llhttp_t: ~576 bytes
-- llhttp_settings_t: ~208 bytes
-- **Total**: ~1 KB
-
-**Per-Request**:
-- Allocations: **0 bytes** (zero-allocation design)
-- Stack usage: ~64 bytes (ParsedHttpRequest)
+Each parser owns a `Parser` structure (including all 64 header entries), a
+`llhttp_t` handle and `llhttp_settings_t` settings on the native heap. Sizes depend
+on the target ABI. Every live wrapper owns one parser, and each thread caches at
+most one additional idle parser. Sequential reuse needs no new allocations;
+cold or overlapping calls may allocate. No request strings are copied.
 
 ### Scaling Characteristics
 
@@ -541,9 +540,9 @@ make test-debug
 
 **Allocation Points** (all C heap, not GC):
 
-1. **Parser Pool** (TLS API - once per thread):
+1. **Parser Cache** (TLS API - on a cold call or while all parsers are leased):
    ```d
-   t_parser = cast(Parser*) calloc(1, Parser.sizeof);
+   Parser* p = cast(Parser*) createParser();
    ```
 
 2. **llhttp Structures** (once per parser):
@@ -559,14 +558,19 @@ make test-debug
    // Freed via destroyParser()
    ```
 
-4. **During Parsing**: **Zero allocations** ✓
+4. **During llhttp execution**: No allocations. `parseHTTP()` first acquires an
+   exclusive parser, which can require native allocation. Releasing a wrapper
+   caches its parser if the current thread's idle slot is empty, otherwise frees
+   it. Thread exit frees the idle slot only.
 
 ### Thread Safety
 
 **TLS API** (`parseHTTP`):
-- ❌ **Not thread-safe**: Each thread must use separate parser
-- ✅ **Thread-local pooling**: Automatic via `ParserPool`
-- ✅ **No shared state**: Complete isolation between threads
+- ✅ **Exclusive leases**: Nested and overlapping calls use independent parsers
+- ✅ **Thread-local idle cache**: A live lease is never stored in the cache
+- ✅ **Thread transfer**: A wrapper may outlive its originating thread when moved
+  with synchronization; its eventual release uses the receiving thread's cache
+- ❌ **Concurrent sharing**: Do not access or destroy the same wrapper concurrently
 
 **Owned API** (`createParser`):
 - ✅ **Fiber-safe**: Each parser instance is independent
@@ -575,11 +579,10 @@ make test-debug
 
 **Thread-Local Model** (TLS API):
 ```d
-static Parser* t_parser;  // TLS variable
-static bool t_busy;        // TLS flag
+static Parser* t_parser;  // TLS idle slot only
 
 // Acquire parser (reuses if available)
-auto wrapper = parseHTTP(data);  // Gets t_parser
+auto wrapper = parseHTTP(data);  // Detaches idle slot, or creates a parser
 
 // Automatically released on scope exit
 ```
@@ -757,10 +760,10 @@ Wire is a focused, production-ready HTTP parser. Contributions should:
 1. Maintain `@nogc` compatibility
 2. Add tests for new features
 3. Follow D best practices
-4. Preserve zero-allocation guarantee
+4. Preserve the no-GC-allocation guarantee and sequential parser reuse
 
 **Contact**: [@federikowsky](https://github.com/federikowsky)
 
 ---
 
-**Wire** - Zero-allocation HTTP parsing for D 🚀
+**Wire** - Zero-GC-allocation HTTP parsing for D 🚀
